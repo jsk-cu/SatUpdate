@@ -1,0 +1,600 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Renderer Module for Satellite Visualization
+
+Provides rendering functions for drawing Earth, satellites, orbits,
+and other visualization elements using Pygame.
+"""
+
+import math
+import numpy as np
+from typing import List, Tuple, Optional
+import pygame
+
+from .camera import Camera
+
+
+# Default color scheme
+class Colors:
+    """Default color palette for visualization."""
+    BACKGROUND = (10, 10, 25)
+    SPHERE = (40, 90, 160)
+    SPHERE_HIGHLIGHT = (80, 140, 200)
+    GRID_LINE = (20, 50, 100)
+    GRID_LINE_BACK = (15, 35, 70)
+    ORBIT_FRONT = (255, 220, 50)
+    ORBIT_BACK = (180, 150, 30)
+    TEXT = (220, 220, 220)
+    TEXT_DIM = (200, 200, 200)
+    
+    # Satellite colors
+    SATELLITE_COLORS = [
+        (255, 255, 100),   # Yellow
+        (100, 255, 150),   # Green
+        (255, 130, 130),   # Red
+        (150, 180, 255),   # Blue
+        (255, 180, 255),   # Pink
+    ]
+    
+    # Orbit colors (front, back) pairs
+    ORBIT_COLORS = [
+        ((255, 220, 50), (180, 150, 30)),    # Yellow
+        ((50, 255, 150), (30, 180, 100)),    # Green
+        ((255, 100, 100), (180, 70, 70)),    # Red
+        ((150, 150, 255), (100, 100, 180)),  # Blue
+        ((255, 150, 255), (180, 100, 180)),  # Pink
+    ]
+
+
+# Import EARTH_RADIUS_KM - handle both direct and package imports
+try:
+    from simulation import EARTH_RADIUS_KM
+except ImportError:
+    EARTH_RADIUS_KM = 6371.0
+
+
+class Renderer:
+    """
+    Handles all rendering operations for the satellite visualizer.
+    
+    Parameters
+    ----------
+    screen : pygame.Surface
+        The Pygame surface to render to
+    earth_visual_radius : float
+        Visual radius of Earth in rendering units (default 1.0)
+    num_latitude_lines : int
+        Number of latitude grid lines (default 8)
+    num_longitude_lines : int
+        Number of longitude grid lines (default 12)
+    orbit_points : int
+        Number of points to sample when drawing orbits (default 360)
+    satellite_size : int
+        Base size of satellite markers in pixels (default 12)
+    """
+    
+    def __init__(
+        self,
+        screen: pygame.Surface,
+        earth_visual_radius: float = 1.0,
+        num_latitude_lines: int = 8,
+        num_longitude_lines: int = 12,
+        orbit_points: int = 360,
+        satellite_size: int = 12
+    ):
+        self.screen = screen
+        self.screen_width = screen.get_width()
+        self.screen_height = screen.get_height()
+        
+        self.earth_visual_radius = earth_visual_radius
+        self.num_latitude_lines = num_latitude_lines
+        self.num_longitude_lines = num_longitude_lines
+        self.orbit_points = orbit_points
+        self.satellite_size = satellite_size
+        
+        # Scale factor for converting km to visual units
+        self.scale_factor = earth_visual_radius / EARTH_RADIUS_KM
+    
+    def clear(self, color: Tuple[int, int, int] = Colors.BACKGROUND) -> None:
+        """Clear the screen with the given background color."""
+        self.screen.fill(color)
+    
+    def project_point(
+        self,
+        point_3d: np.ndarray,
+        camera: Camera
+    ) -> Tuple[Optional[Tuple[float, float]], float]:
+        """
+        Project a 3D point to 2D screen coordinates.
+        
+        Parameters
+        ----------
+        point_3d : np.ndarray
+            3D point [x, y, z] in visualization coordinates
+        camera : Camera
+            The camera for projection
+        
+        Returns
+        -------
+        Tuple[Optional[Tuple[float, float]], float]
+            ((screen_x, screen_y), depth) or (None, depth) if behind camera
+        """
+        cam_pos = camera.get_position()
+        forward, up, right = camera.get_view_matrix()
+        
+        to_point = point_3d - cam_pos
+        depth = np.dot(to_point, forward)
+        
+        if depth <= 0.1:
+            return None, depth
+        
+        fov_scale = self.screen_height / 2
+        x_proj = np.dot(to_point, right) / depth * fov_scale
+        y_proj = -np.dot(to_point, up) / depth * fov_scale
+        
+        screen_x = self.screen_width / 2 + x_proj
+        screen_y = self.screen_height / 2 + y_proj
+        
+        return (screen_x, screen_y), depth
+    
+    def get_projected_sphere_radius(self, camera: Camera) -> float:
+        """Calculate the apparent radius of Earth on screen."""
+        fov_scale = self.screen_height / 2
+        return self.earth_visual_radius / camera.distance * fov_scale
+    
+    def is_point_visible_on_sphere(
+        self,
+        point_3d: np.ndarray,
+        camera: Camera
+    ) -> bool:
+        """Check if a point on Earth's surface is facing the camera."""
+        cam_pos = camera.get_position()
+        to_camera = cam_pos - point_3d
+        normal = point_3d / np.linalg.norm(point_3d)
+        return np.dot(normal, to_camera) > 0
+    
+    def is_point_in_front_of_earth(
+        self,
+        point_3d: np.ndarray,
+        camera: Camera
+    ) -> bool:
+        """
+        Check if a point in space is visible (not occluded by Earth).
+        
+        Parameters
+        ----------
+        point_3d : np.ndarray
+            3D point in visualization coordinates
+        camera : Camera
+            The camera
+        
+        Returns
+        -------
+        bool
+            True if the point is visible (in front of Earth from camera)
+        """
+        cam_pos = camera.get_position()
+        point_dist = np.linalg.norm(point_3d)
+        
+        # If point is inside Earth, it's behind
+        if point_dist < self.earth_visual_radius:
+            return False
+        
+        to_point = point_3d - cam_pos
+        to_point_dist = np.linalg.norm(to_point)
+        to_point_normalized = to_point / to_point_dist
+        
+        # Find closest approach to Earth center along the ray
+        closest_approach_t = -np.dot(cam_pos, to_point_normalized)
+        
+        if closest_approach_t > to_point_dist:
+            return True
+        if closest_approach_t < 0:
+            return True
+        
+        closest_point = cam_pos + closest_approach_t * to_point_normalized
+        closest_dist_to_center = np.linalg.norm(closest_point)
+        
+        if closest_dist_to_center > self.earth_visual_radius:
+            return True
+        
+        # Ray intersects Earth - check if point is before intersection
+        half_chord = math.sqrt(self.earth_visual_radius**2 - closest_dist_to_center**2)
+        entry_t = closest_approach_t - half_chord
+        
+        return to_point_dist < entry_t
+    
+    def draw_earth(self, camera: Camera) -> None:
+        """Draw the semi-transparent Earth sphere with gradient."""
+        center_3d = np.array([0, 0, 0])
+        center_2d, _ = self.project_point(center_3d, camera)
+        
+        if center_2d is None:
+            return
+        
+        radius = self.get_projected_sphere_radius(camera)
+        
+        # Create surface with alpha for transparency
+        sphere_surface = pygame.Surface(
+            (int(radius * 2) + 4, int(radius * 2) + 4),
+            pygame.SRCALPHA
+        )
+        center_on_surface = (int(radius) + 2, int(radius) + 2)
+        
+        # Draw sphere with gradient and transparency
+        for i in range(int(radius), 0, -2):
+            factor = i / radius
+            alpha = int(200 * factor + 55)
+            r = int(Colors.SPHERE[0] + 
+                   (Colors.SPHERE_HIGHLIGHT[0] - Colors.SPHERE[0]) * (1 - factor))
+            g = int(Colors.SPHERE[1] + 
+                   (Colors.SPHERE_HIGHLIGHT[1] - Colors.SPHERE[1]) * (1 - factor))
+            b = int(Colors.SPHERE[2] + 
+                   (Colors.SPHERE_HIGHLIGHT[2] - Colors.SPHERE[2]) * (1 - factor))
+            color = (min(255, r), min(255, g), min(255, b), alpha)
+            pygame.draw.circle(sphere_surface, color, center_on_surface, int(i))
+        
+        self.screen.blit(
+            sphere_surface,
+            (int(center_2d[0] - radius - 2), int(center_2d[1] - radius - 2))
+        )
+    
+    def _generate_circle_points(
+        self,
+        center: np.ndarray,
+        axis: np.ndarray,
+        radius: float,
+        num_points: int = 72
+    ) -> List[np.ndarray]:
+        """Generate points along a circle in 3D space."""
+        axis = axis / np.linalg.norm(axis)
+        
+        if abs(axis[0]) < 0.9:
+            perp1 = np.cross(axis, np.array([1, 0, 0]))
+        else:
+            perp1 = np.cross(axis, np.array([0, 1, 0]))
+        perp1 = perp1 / np.linalg.norm(perp1)
+        
+        perp2 = np.cross(axis, perp1)
+        perp2 = perp2 / np.linalg.norm(perp2)
+        
+        points = []
+        for i in range(num_points + 1):
+            angle = 2 * math.pi * i / num_points
+            point = center + radius * (math.cos(angle) * perp1 + math.sin(angle) * perp2)
+            points.append(point)
+        
+        return points
+    
+    def _draw_line_segments(
+        self,
+        points: List[Tuple[float, float]],
+        color: Tuple[int, int, int],
+        width: int
+    ) -> None:
+        """Draw connected line segments, handling discontinuities."""
+        if len(points) < 2:
+            return
+        
+        segments = []
+        current_segment = [points[0]]
+        
+        for i in range(1, len(points)):
+            prev = points[i-1]
+            curr = points[i]
+            dist = math.sqrt((curr[0] - prev[0])**2 + (curr[1] - prev[1])**2)
+            
+            if dist > 50:  # Discontinuity threshold
+                if len(current_segment) > 1:
+                    segments.append(current_segment)
+                current_segment = [curr]
+            else:
+                current_segment.append(curr)
+        
+        if len(current_segment) > 1:
+            segments.append(current_segment)
+        
+        for segment in segments:
+            if len(segment) > 1:
+                pygame.draw.lines(
+                    self.screen, color, False,
+                    [(int(p[0]), int(p[1])) for p in segment], width
+                )
+    
+    def draw_earth_grid(self, camera: Camera) -> None:
+        """Draw latitude and longitude grid lines on Earth."""
+        # Draw back lines first
+        for i in range(1, self.num_latitude_lines):
+            lat = -math.pi/2 + math.pi * i / self.num_latitude_lines
+            self._draw_latitude_line(camera, lat, is_back=True)
+        
+        for i in range(self.num_longitude_lines):
+            lon = 2 * math.pi * i / self.num_longitude_lines
+            self._draw_longitude_line(camera, lon, is_back=True)
+        
+        # Draw front lines
+        for i in range(1, self.num_latitude_lines):
+            lat = -math.pi/2 + math.pi * i / self.num_latitude_lines
+            self._draw_latitude_line(camera, lat, is_back=False)
+        
+        for i in range(self.num_longitude_lines):
+            lon = 2 * math.pi * i / self.num_longitude_lines
+            self._draw_longitude_line(camera, lon, is_back=False)
+    
+    def _draw_latitude_line(
+        self,
+        camera: Camera,
+        latitude_angle: float,
+        is_back: bool = False
+    ) -> None:
+        """Draw a latitude line (parallel to equator)."""
+        z = self.earth_visual_radius * math.sin(latitude_angle)
+        circle_radius = self.earth_visual_radius * math.cos(latitude_angle)
+        center = np.array([0, 0, z])
+        axis = np.array([0, 0, 1])
+        
+        points = self._generate_circle_points(center, axis, circle_radius, num_points=72)
+        
+        screen_points_front = []
+        screen_points_back = []
+        
+        for point in points:
+            proj, _ = self.project_point(point, camera)
+            if proj is not None:
+                visible = self.is_point_visible_on_sphere(point, camera)
+                if visible:
+                    screen_points_front.append(proj)
+                else:
+                    screen_points_back.append(proj)
+        
+        if is_back and len(screen_points_back) > 1:
+            self._draw_line_segments(screen_points_back, Colors.GRID_LINE_BACK, 1)
+        
+        if not is_back and len(screen_points_front) > 1:
+            base_width = max(1, int(3 / camera.distance * 2))
+            self._draw_line_segments(screen_points_front, Colors.GRID_LINE, base_width)
+    
+    def _draw_longitude_line(
+        self,
+        camera: Camera,
+        longitude_angle: float,
+        is_back: bool = False
+    ) -> None:
+        """Draw a longitude line (meridian)."""
+        axis = np.array([
+            math.cos(longitude_angle + math.pi/2),
+            math.sin(longitude_angle + math.pi/2),
+            0
+        ])
+        center = np.array([0, 0, 0])
+        
+        points = self._generate_circle_points(
+            center, axis, self.earth_visual_radius, num_points=72
+        )
+        
+        screen_points_front = []
+        screen_points_back = []
+        
+        for point in points:
+            proj, _ = self.project_point(point, camera)
+            if proj is not None:
+                visible = self.is_point_visible_on_sphere(point, camera)
+                if visible:
+                    screen_points_front.append(proj)
+                else:
+                    screen_points_back.append(proj)
+        
+        if is_back and len(screen_points_back) > 1:
+            self._draw_line_segments(screen_points_back, Colors.GRID_LINE_BACK, 1)
+        
+        if not is_back and len(screen_points_front) > 1:
+            base_width = max(1, int(3 / camera.distance * 2))
+            self._draw_line_segments(screen_points_front, Colors.GRID_LINE, base_width)
+    
+    def draw_orbit(
+        self,
+        camera: Camera,
+        orbit,  # EllipticalOrbit
+        color_front: Tuple[int, int, int],
+        color_back: Tuple[int, int, int]
+    ) -> None:
+        """Draw an elliptical orbit around Earth."""
+        screen_points_front = []
+        screen_points_back = []
+        
+        for i in range(self.orbit_points + 1):
+            nu = 2 * math.pi * i / self.orbit_points
+            pos_km = orbit.position_eci(nu)
+            pos_visual = pos_km * self.scale_factor
+            
+            proj, _ = self.project_point(pos_visual, camera)
+            if proj is not None:
+                in_front = self.is_point_in_front_of_earth(pos_visual, camera)
+                if in_front:
+                    screen_points_front.append(proj)
+                else:
+                    screen_points_back.append(proj)
+        
+        # Draw back portions first
+        if len(screen_points_back) > 1:
+            self._draw_line_segments(screen_points_back, color_back, 1)
+        
+        # Draw front portions
+        if len(screen_points_front) > 1:
+            line_width = max(2, int(4 / camera.distance * 2))
+            self._draw_line_segments(screen_points_front, color_front, line_width)
+    
+    def draw_orbits(self, camera: Camera, orbits: List) -> None:
+        """Draw all orbits with different colors."""
+        for i, orbit in enumerate(orbits):
+            color_front, color_back = Colors.ORBIT_COLORS[i % len(Colors.ORBIT_COLORS)]
+            self.draw_orbit(camera, orbit, color_front, color_back)
+    
+    def draw_satellite(
+        self,
+        camera: Camera,
+        satellite,  # Satellite
+        color: Tuple[int, int, int],
+        size: Optional[int] = None
+    ) -> None:
+        """Draw a single satellite as a triangle."""
+        if size is None:
+            size = self.satellite_size
+        
+        pos_km = satellite.get_position_eci()
+        pos_visual = pos_km * self.scale_factor
+        
+        in_front = self.is_point_in_front_of_earth(pos_visual, camera)
+        proj, depth = self.project_point(pos_visual, camera)
+        
+        if proj is None:
+            return
+        
+        # Perspective-adjusted size
+        perspective_size = size * (3.0 / depth) if depth > 0 else size
+        perspective_size = max(4, min(20, perspective_size))
+        
+        # Get velocity for orientation
+        vel_km = satellite.get_velocity_eci()
+        vel_visual = vel_km * self.scale_factor
+        
+        pos_future = pos_visual + vel_visual * 100
+        proj_future, _ = self.project_point(pos_future, camera)
+        
+        if proj_future is not None:
+            direction = (proj_future[0] - proj[0], proj_future[1] - proj[1])
+        else:
+            direction = None
+        
+        # Generate triangle points
+        triangle_points = self._get_satellite_triangle_points(
+            proj, perspective_size, direction
+        )
+        
+        # Determine colors based on visibility
+        if in_front:
+            draw_color = color
+            outline_color = (255, 255, 255)
+            outline_width = 2
+        else:
+            draw_color = tuple(int(c * 0.4) for c in color)
+            outline_color = tuple(int(c * 0.5) for c in color)
+            outline_width = 1
+        
+        # Draw triangle
+        int_points = [(int(p[0]), int(p[1])) for p in triangle_points]
+        pygame.draw.polygon(self.screen, draw_color, int_points)
+        pygame.draw.polygon(self.screen, outline_color, int_points, outline_width)
+    
+    def _get_satellite_triangle_points(
+        self,
+        center_2d: Tuple[float, float],
+        size: float,
+        direction: Optional[Tuple[float, float]] = None
+    ) -> List[Tuple[float, float]]:
+        """Generate triangle points for a satellite marker."""
+        if direction is not None and (direction[0] != 0 or direction[1] != 0):
+            dx, dy = direction
+            mag = math.sqrt(dx*dx + dy*dy)
+            dx, dy = dx/mag, dy/mag
+            px, py = -dy, dx
+        else:
+            dx, dy = 0, -1
+            px, py = 1, 0
+        
+        cx, cy = center_2d
+        
+        tip = (cx + dx * size, cy + dy * size)
+        left = (cx - dx * size * 0.5 + px * size * 0.6,
+                cy - dy * size * 0.5 + py * size * 0.6)
+        right = (cx - dx * size * 0.5 - px * size * 0.6,
+                 cy - dy * size * 0.5 - py * size * 0.6)
+        
+        return [tip, left, right]
+    
+    def draw_satellites(self, camera: Camera, satellites: List) -> None:
+        """Draw all satellites with different colors."""
+        for i, satellite in enumerate(satellites):
+            color = Colors.SATELLITE_COLORS[i % len(Colors.SATELLITE_COLORS)]
+            self.draw_satellite(camera, satellite, color)
+    
+    def draw_text(
+        self,
+        text: str,
+        position: Tuple[int, int],
+        font: pygame.font.Font,
+        color: Tuple[int, int, int] = Colors.TEXT
+    ) -> int:
+        """
+        Draw text at the given position.
+        
+        Returns the height of the rendered text.
+        """
+        surface = font.render(text, True, color)
+        self.screen.blit(surface, position)
+        return surface.get_height()
+    
+    def draw_info_panel(
+        self,
+        camera: Camera,
+        simulation,  # Simulation
+        font: pygame.font.Font,
+        time_scale: float,
+        paused: bool
+    ) -> None:
+        """Draw the information panel with camera and simulation info."""
+        # Format simulation time
+        sim_time = simulation.state.time
+        hours = int(sim_time // 3600)
+        minutes = int((sim_time % 3600) // 60)
+        seconds = int(sim_time % 60)
+        
+        info_lines = [
+            f"Camera Longitude: {camera.theta_degrees:.1f}°",
+            f"Camera Latitude: {camera.phi_degrees:.1f}°",
+            f"Zoom: {camera.distance:.2f}",
+            "",
+            f"Sim Time: {hours:02d}:{minutes:02d}:{seconds:02d}",
+            f"Time Scale: {time_scale:.0f}x" + (" [PAUSED]" if paused else ""),
+            "",
+            "Controls:",
+            "← → : Rotate longitude",
+            "↑ ↓ : Rotate latitude",
+            "+/- : Zoom in/out",
+            "[ ] : Time scale",
+            "SPACE : Pause/Resume",
+            "R : Regenerate",
+            "ESC : Quit",
+        ]
+        
+        y = 10
+        for line in info_lines:
+            y += self.draw_text(line, (10, y), font) + 2
+        
+        # Satellite details on the right side
+        y = 10
+        for i, satellite in enumerate(simulation.satellites):
+            geo = satellite.get_geospatial_position()
+            orbit = satellite.orbit
+            
+            sat_info = [
+                f"Satellite {i+1}: {satellite.satellite_id}",
+                f"  Alt: {geo.altitude:.0f} km",
+                f"  Lat: {geo.latitude_deg:+.1f}°",
+                f"  Lon: {geo.longitude_deg:+.1f}°",
+                f"  Orbit: {satellite.position*100:.1f}%",
+                f"  Period: {orbit.period/60:.1f} min",
+            ]
+            
+            for line in sat_info:
+                y += self.draw_text(line, (self.screen_width - 200, y), font, Colors.TEXT_DIM) + 1
+            y += 8
+            
+            # Limit display to avoid overflow
+            if y > self.screen_height - 100:
+                self.draw_text(
+                    f"... and {len(simulation.satellites) - i - 1} more",
+                    (self.screen_width - 200, y), font, Colors.TEXT_DIM
+                )
+                break
