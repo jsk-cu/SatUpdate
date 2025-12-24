@@ -28,6 +28,10 @@ class Colors:
     TEXT = (220, 220, 220)
     TEXT_DIM = (200, 200, 200)
     
+    # Communication link colors
+    LINK_COLOR = (50, 255, 100)        # Bright green for visible links
+    LINK_COLOR_BACK = (30, 150, 60)    # Dimmer green for links behind Earth
+    
     # Satellite colors
     SATELLITE_COLORS = [
         (255, 255, 100),   # Yellow
@@ -519,6 +523,73 @@ class Renderer:
             color = Colors.SATELLITE_COLORS[i % len(Colors.SATELLITE_COLORS)]
             self.draw_satellite(camera, satellite, color)
     
+    def draw_communication_links(
+        self,
+        camera: Camera,
+        satellites: List,
+        active_links: set  # Set[Tuple[str, str]]
+    ) -> None:
+        """
+        Draw communication links between satellites.
+        
+        Parameters
+        ----------
+        camera : Camera
+            The current camera
+        satellites : List
+            List of Satellite objects
+        active_links : set
+            Set of (sat1_id, sat2_id) tuples for active links
+        """
+        if not active_links:
+            return
+        
+        # Build a lookup dict for satellites by ID
+        sat_by_id = {sat.satellite_id: sat for sat in satellites}
+        
+        for sat1_id, sat2_id in active_links:
+            sat1 = sat_by_id.get(sat1_id)
+            sat2 = sat_by_id.get(sat2_id)
+            
+            if sat1 is None or sat2 is None:
+                continue
+            
+            # Get 3D positions in visual coordinates
+            pos1_km = sat1.get_position_eci()
+            pos2_km = sat2.get_position_eci()
+            pos1_visual = pos1_km * self.scale_factor
+            pos2_visual = pos2_km * self.scale_factor
+            
+            # Project to screen coordinates
+            proj1, depth1 = self.project_point(pos1_visual, camera)
+            proj2, depth2 = self.project_point(pos2_visual, camera)
+            
+            if proj1 is None or proj2 is None:
+                continue
+            
+            # Determine if link is in front or behind Earth
+            # Link is "in front" if both satellites are in front of Earth
+            in_front1 = self.is_point_in_front_of_earth(pos1_visual, camera)
+            in_front2 = self.is_point_in_front_of_earth(pos2_visual, camera)
+            
+            if in_front1 and in_front2:
+                # Both satellites visible - draw bright link
+                color = Colors.LINK_COLOR
+                width = max(1, int(2 / camera.distance * 2))
+            else:
+                # At least one satellite behind Earth - draw dim link
+                color = Colors.LINK_COLOR_BACK
+                width = 1
+            
+            # Draw the line
+            pygame.draw.line(
+                self.screen,
+                color,
+                (int(proj1[0]), int(proj1[1])),
+                (int(proj2[0]), int(proj2[1])),
+                width
+            )
+    
     def draw_text(
         self,
         text: str,
@@ -550,6 +621,11 @@ class Renderer:
         minutes = int((sim_time % 3600) // 60)
         seconds = int(sim_time % 60)
         
+        # Count total possible links
+        n = len(simulation.satellites)
+        total_pairs = n * (n - 1) // 2
+        active_count = len(simulation.state.active_links)
+        
         info_lines = [
             f"Camera Longitude: {camera.theta_degrees:.1f}°",
             f"Camera Latitude: {camera.phi_degrees:.1f}°",
@@ -557,6 +633,7 @@ class Renderer:
             "",
             f"Sim Time: {hours:02d}:{minutes:02d}:{seconds:02d}",
             f"Time Scale: {time_scale:.0f}x" + (" [PAUSED]" if paused else ""),
+            f"Active Links: {active_count}/{total_pairs}",
             "",
             "Controls:",
             "← → : Rotate longitude",

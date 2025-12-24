@@ -243,6 +243,13 @@ class Visualizer:
         # Draw orbits
         self.renderer.draw_orbits(self.camera, self.simulation.orbits)
         
+        # Draw communication links (before satellites so they appear underneath)
+        self.renderer.draw_communication_links(
+            self.camera,
+            self.simulation.satellites,
+            self.simulation.state.active_links
+        )
+        
         # Draw satellites
         self.renderer.draw_satellites(self.camera, self.simulation.satellites)
         

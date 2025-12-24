@@ -8,7 +8,7 @@ The simulation can be run independently of any visualization.
 """
 
 import math
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any, Set
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -63,6 +63,9 @@ class SimulationConfig:
         Earth mass in kg
     random_seed : Optional[int]
         Random seed for reproducibility
+    communication_range : Optional[float]
+        Maximum communication range in km. If None, range is unlimited.
+        Satellites must have line-of-sight AND be within this range to communicate.
     """
     constellation_type: ConstellationType = ConstellationType.WALKER_DELTA
     num_planes: int = 3
@@ -77,6 +80,7 @@ class SimulationConfig:
     earth_radius: float = EARTH_RADIUS_KM
     earth_mass: float = EARTH_MASS_KG
     random_seed: Optional[int] = None
+    communication_range: Optional[float] = None  # km, None = unlimited
 
 
 @dataclass
@@ -92,10 +96,16 @@ class SimulationState:
         Number of simulation steps executed
     satellite_positions : Dict[str, GeospatialPosition]
         Current geospatial positions of all satellites
+    active_links : Set[Tuple[str, str]]
+        Set of satellite ID pairs that currently have an active communication link.
+        A link is active when both satellites have line-of-sight AND are within
+        communication range. Pairs are stored as (sat1_id, sat2_id) where
+        sat1_id < sat2_id alphabetically.
     """
     time: float = 0.0
     step_count: int = 0
     satellite_positions: Dict[str, GeospatialPosition] = field(default_factory=dict)
+    active_links: Set[Tuple[str, str]] = field(default_factory=set)
 
 
 class Simulation:
@@ -153,6 +163,7 @@ class Simulation:
         """
         self._create_constellation()
         self._update_state()
+        self._update_active_links()
         self._initialized = True
     
     def _create_constellation(self) -> None:
@@ -205,6 +216,46 @@ class Simulation:
             for sat in self.satellites
         }
     
+    def _update_active_links(self) -> None:
+        """
+        Update the set of active communication links between satellites.
+        
+        A link is active when:
+        1. Both satellites have line-of-sight to each other (not blocked by Earth)
+        2. The distance between them is within communication_range (if set)
+        
+        The active_links set contains tuples of (sat1_id, sat2_id) where
+        sat1_id < sat2_id alphabetically for consistent ordering.
+        """
+        active_links: Set[Tuple[str, str]] = set()
+        comm_range = self.config.communication_range
+        n = len(self.satellites)
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                sat_i = self.satellites[i]
+                sat_j = self.satellites[j]
+                
+                # Check line of sight first (computationally cheaper to fail fast)
+                if not sat_i.has_line_of_sight(sat_j):
+                    continue
+                
+                # Check communication range if set
+                if comm_range is not None:
+                    distance = sat_i.distance_to(sat_j)
+                    if distance > comm_range:
+                        continue
+                
+                # Both conditions met - link is active
+                # Store with consistent ordering (alphabetically by ID)
+                id_i, id_j = sat_i.satellite_id, sat_j.satellite_id
+                if id_i < id_j:
+                    active_links.add((id_i, id_j))
+                else:
+                    active_links.add((id_j, id_i))
+        
+        self.state.active_links = active_links
+    
     def step(self, timestep: float) -> SimulationState:
         """
         Advance the simulation by one timestep.
@@ -237,6 +288,9 @@ class Simulation:
         
         # Update state
         self._update_state()
+        
+        # Update active communication links
+        self._update_active_links()
         
         return self.state
     
@@ -282,6 +336,7 @@ class Simulation:
         self.state = SimulationState()
         self._create_constellation()
         self._update_state()
+        self._update_active_links()
     
     def regenerate(self, new_seed: Optional[int] = None) -> None:
         """
@@ -320,6 +375,7 @@ class Simulation:
         self.satellites = satellites
         self.state = SimulationState()
         self._update_state()
+        self._update_active_links()
         self._initialized = True
     
     def get_satellite(self, satellite_id: str) -> Optional[Satellite]:
