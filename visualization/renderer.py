@@ -32,6 +32,12 @@ class Colors:
     LINK_COLOR = (50, 255, 100)        # Bright green for visible links
     LINK_COLOR_BACK = (30, 150, 60)    # Dimmer green for links behind Earth
     
+    # Base station colors
+    BASE_STATION_COLOR = (50, 255, 100)       # Bright green
+    BASE_STATION_COLOR_BACK = (30, 150, 60)   # Dimmer green when behind Earth
+    BASE_STATION_LINK_COLOR = (50, 255, 100)  # Green for base station links
+    BASE_STATION_LINK_COLOR_BACK = (30, 150, 60)
+    
     # Satellite colors
     SATELLITE_COLORS = [
         (255, 255, 100),   # Yellow
@@ -523,6 +529,145 @@ class Renderer:
             color = Colors.SATELLITE_COLORS[i % len(Colors.SATELLITE_COLORS)]
             self.draw_satellite(camera, satellite, color)
     
+    def draw_base_station(
+        self,
+        camera: Camera,
+        base_station,  # BaseStation
+        earth_rotation_angle: float,
+        size: int = 10
+    ) -> None:
+        """
+        Draw a base station as a green square on Earth's surface.
+        
+        Parameters
+        ----------
+        camera : Camera
+            The current camera
+        base_station : BaseStation
+            The base station to draw
+        earth_rotation_angle : float
+            Current Earth rotation angle in radians
+        size : int
+            Size of the square in pixels
+        """
+        # Get position in ECI coordinates
+        pos_km = base_station.get_position_eci(earth_rotation_angle)
+        pos_visual = pos_km * self.scale_factor
+        
+        # Check if visible (on front of Earth)
+        in_front = self.is_point_visible_on_sphere(pos_visual, camera)
+        proj, depth = self.project_point(pos_visual, camera)
+        
+        if proj is None:
+            return
+        
+        # Perspective-adjusted size
+        perspective_size = size * (3.0 / depth) if depth > 0 else size
+        perspective_size = max(4, min(16, perspective_size))
+        
+        # Choose color based on visibility
+        if in_front:
+            color = Colors.BASE_STATION_COLOR
+            outline_color = (255, 255, 255)
+            outline_width = 2
+        else:
+            color = Colors.BASE_STATION_COLOR_BACK
+            outline_color = tuple(int(c * 0.5) for c in Colors.BASE_STATION_COLOR)
+            outline_width = 1
+        
+        # Draw square centered at projection point
+        half_size = perspective_size / 2
+        rect = pygame.Rect(
+            int(proj[0] - half_size),
+            int(proj[1] - half_size),
+            int(perspective_size),
+            int(perspective_size)
+        )
+        pygame.draw.rect(self.screen, color, rect)
+        pygame.draw.rect(self.screen, outline_color, rect, outline_width)
+    
+    def draw_base_stations(
+        self,
+        camera: Camera,
+        base_stations: List,
+        earth_rotation_angle: float
+    ) -> None:
+        """Draw all base stations."""
+        for base_station in base_stations:
+            self.draw_base_station(camera, base_station, earth_rotation_angle)
+    
+    def draw_base_station_links(
+        self,
+        camera: Camera,
+        base_stations: List,
+        satellites: List,
+        base_station_links: set,  # Set[Tuple[str, str]]
+        earth_rotation_angle: float
+    ) -> None:
+        """
+        Draw communication links between base stations and satellites.
+        
+        Parameters
+        ----------
+        camera : Camera
+            The current camera
+        base_stations : List
+            List of BaseStation objects
+        satellites : List
+            List of Satellite objects
+        base_station_links : set
+            Set of (base_station_name, satellite_id) tuples for active links
+        earth_rotation_angle : float
+            Current Earth rotation angle in radians
+        """
+        if not base_station_links:
+            return
+        
+        # Build lookup dicts
+        bs_by_name = {bs.name: bs for bs in base_stations}
+        sat_by_id = {sat.satellite_id: sat for sat in satellites}
+        
+        for bs_name, sat_id in base_station_links:
+            base_station = bs_by_name.get(bs_name)
+            satellite = sat_by_id.get(sat_id)
+            
+            if base_station is None or satellite is None:
+                continue
+            
+            # Get 3D positions in visual coordinates
+            pos_bs_km = base_station.get_position_eci(earth_rotation_angle)
+            pos_sat_km = satellite.get_position_eci()
+            pos_bs_visual = pos_bs_km * self.scale_factor
+            pos_sat_visual = pos_sat_km * self.scale_factor
+            
+            # Project to screen coordinates
+            proj_bs, depth_bs = self.project_point(pos_bs_visual, camera)
+            proj_sat, depth_sat = self.project_point(pos_sat_visual, camera)
+            
+            if proj_bs is None or proj_sat is None:
+                continue
+            
+            # Determine if link is visible
+            # Base station is visible if on front of Earth
+            bs_visible = self.is_point_visible_on_sphere(pos_bs_visual, camera)
+            sat_visible = self.is_point_in_front_of_earth(pos_sat_visual, camera)
+            
+            if bs_visible and sat_visible:
+                color = Colors.BASE_STATION_LINK_COLOR
+                width = max(1, int(2 / camera.distance * 2))
+            else:
+                color = Colors.BASE_STATION_LINK_COLOR_BACK
+                width = 1
+            
+            # Draw the line
+            pygame.draw.line(
+                self.screen,
+                color,
+                (int(proj_bs[0]), int(proj_bs[1])),
+                (int(proj_sat[0]), int(proj_sat[1])),
+                width
+            )
+    
     def draw_communication_links(
         self,
         camera: Camera,
@@ -625,6 +770,7 @@ class Renderer:
         n = len(simulation.satellites)
         total_pairs = n * (n - 1) // 2
         active_count = len(simulation.state.active_links)
+        bs_link_count = len(simulation.state.base_station_links)
         
         info_lines = [
             f"Camera Longitude: {camera.theta_degrees:.1f}°",
@@ -634,6 +780,7 @@ class Renderer:
             f"Sim Time: {hours:02d}:{minutes:02d}:{seconds:02d}",
             f"Time Scale: {time_scale:.0f}x" + (" [PAUSED]" if paused else ""),
             f"Active Links: {active_count}/{total_pairs}",
+            f"Base Station Links: {bs_link_count}",
             "",
             "Controls:",
             "← → : Rotate longitude",

@@ -20,6 +20,7 @@ from .constellation import (
     create_walker_delta_constellation,
     create_walker_star_constellation,
 )
+from .base_station import BaseStation, BaseStationConfig
 
 
 class ConstellationType(Enum):
@@ -101,11 +102,14 @@ class SimulationState:
         A link is active when both satellites have line-of-sight AND are within
         communication range. Pairs are stored as (sat1_id, sat2_id) where
         sat1_id < sat2_id alphabetically.
+    base_station_links : Set[Tuple[str, str]]
+        Set of (base_station_name, satellite_id) pairs with active communication.
     """
     time: float = 0.0
     step_count: int = 0
     satellite_positions: Dict[str, GeospatialPosition] = field(default_factory=dict)
     active_links: Set[Tuple[str, str]] = field(default_factory=set)
+    base_station_links: Set[Tuple[str, str]] = field(default_factory=set)
 
 
 class Simulation:
@@ -129,6 +133,8 @@ class Simulation:
         List of orbital elements for each orbit
     satellites : List[Satellite]
         List of satellites in the constellation
+    base_stations : List[BaseStation]
+        List of base stations
     state : SimulationState
         Current state of the simulation
     earth_rotation_rate : float
@@ -150,6 +156,7 @@ class Simulation:
         self.config = config or SimulationConfig()
         self.orbits: List[EllipticalOrbit] = []
         self.satellites: List[Satellite] = []
+        self.base_stations: List[BaseStation] = []
         self.state = SimulationState()
         self.earth_rotation_rate = self.EARTH_ROTATION_RATE
         
@@ -162,8 +169,10 @@ class Simulation:
         This must be called before stepping the simulation.
         """
         self._create_constellation()
+        self._create_base_stations()
         self._update_state()
         self._update_active_links()
+        self._update_base_station_links()
         self._initialized = True
     
     def _create_constellation(self) -> None:
@@ -206,6 +215,17 @@ class Simulation:
         elif config.constellation_type == ConstellationType.CUSTOM:
             # For custom constellations, orbits and satellites should be set externally
             pass
+    
+    def _create_base_stations(self) -> None:
+        """Create default base station at 0,0 coordinates."""
+        # Create a base station at 0 latitude, 0 longitude
+        base_station = BaseStation.at_coordinates(
+            latitude_deg=0.0,
+            longitude_deg=0.0,
+            communication_range=10000.0,
+            name="BASE-1"
+        )
+        self.base_stations = [base_station]
     
     def _update_state(self) -> None:
         """Update the simulation state with current satellite positions."""
@@ -256,6 +276,20 @@ class Simulation:
         
         self.state.active_links = active_links
     
+    def _update_base_station_links(self) -> None:
+        """
+        Update the set of active communication links between base stations and satellites.
+        """
+        base_station_links: Set[Tuple[str, str]] = set()
+        earth_rotation = self.state.time * self.earth_rotation_rate
+        
+        for base_station in self.base_stations:
+            for satellite in self.satellites:
+                if base_station.can_communicate(satellite, earth_rotation):
+                    base_station_links.add((base_station.name, satellite.satellite_id))
+        
+        self.state.base_station_links = base_station_links
+    
     def step(self, timestep: float) -> SimulationState:
         """
         Advance the simulation by one timestep.
@@ -291,6 +325,9 @@ class Simulation:
         
         # Update active communication links
         self._update_active_links()
+        
+        # Update base station links
+        self._update_base_station_links()
         
         return self.state
     
@@ -335,8 +372,10 @@ class Simulation:
         """
         self.state = SimulationState()
         self._create_constellation()
+        self._create_base_stations()
         self._update_state()
         self._update_active_links()
+        self._update_base_station_links()
     
     def regenerate(self, new_seed: Optional[int] = None) -> None:
         """
@@ -374,8 +413,10 @@ class Simulation:
         self.orbits = orbits
         self.satellites = satellites
         self.state = SimulationState()
+        self._create_base_stations()
         self._update_state()
         self._update_active_links()
+        self._update_base_station_links()
         self._initialized = True
     
     def get_satellite(self, satellite_id: str) -> Optional[Satellite]:
@@ -467,6 +508,7 @@ class Simulation:
             "constellation_type": self.config.constellation_type.value,
             "num_satellites": self.num_satellites,
             "num_orbits": self.num_orbits,
+            "num_base_stations": len(self.base_stations),
             "simulation_time": self.state.time,
             "step_count": self.state.step_count,
             "initialized": self._initialized,
@@ -478,6 +520,7 @@ class Simulation:
             f"  type={self.config.constellation_type.value},\n"
             f"  satellites={self.num_satellites},\n"
             f"  orbits={self.num_orbits},\n"
+            f"  base_stations={len(self.base_stations)},\n"
             f"  time={self.state.time:.2f}s,\n"
             f"  steps={self.state.step_count}\n"
             f")"
@@ -541,6 +584,10 @@ if __name__ == "__main__":
     sim.initialize()
     
     print(f"\nCreated simulation: {sim}")
+    print(f"\nBase stations:")
+    for bs in sim.base_stations:
+        print(f"  {bs}")
+    
     print(f"\nInitial satellite positions:")
     for sat_id, geo in sim.state.satellite_positions.items():
         print(f"  {sat_id}: {geo}")
@@ -554,6 +601,7 @@ if __name__ == "__main__":
     print(f"\nAfter 10 minutes:")
     print(f"  Simulation time: {sim.simulation_time} seconds")
     print(f"  Step count: {sim.state.step_count}")
+    print(f"  Base station links: {len(sim.state.base_station_links)}")
     
     # Get inter-satellite distances
     print(f"\nSample inter-satellite distances:")

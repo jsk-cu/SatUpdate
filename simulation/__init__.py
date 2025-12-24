@@ -33,6 +33,11 @@ from .constellation import (
     create_gps_like_constellation,
 )
 
+from .base_station import (
+    BaseStation,
+    BaseStationConfig,
+)
+
 from .simulation import (
     Simulation,
     SimulationConfig,
@@ -62,6 +67,10 @@ __all__ = [
     "create_walker_star_constellation",
     "create_starlink_like_constellation",
     "create_gps_like_constellation",
+    
+    # Base Station
+    "BaseStation",
+    "BaseStationConfig",
     
     # Simulation
     "Simulation",

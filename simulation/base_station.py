@@ -173,7 +173,9 @@ class BaseStation:
         closest_point = pos_station + t_clamped * to_satellite_normalized
         closest_dist = np.linalg.norm(closest_point)
         
-        return closest_dist > self.earth_radius
+        # Use small epsilon for floating point comparison
+        # Base station is on Earth's surface, so closest approach can equal earth_radius
+        return closest_dist >= self.earth_radius - 1.0  # 1 km tolerance
     
     def is_in_range(
         self,

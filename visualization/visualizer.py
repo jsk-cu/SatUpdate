@@ -234,6 +234,9 @@ class Visualizer:
             pygame.display.flip()
             return
         
+        # Calculate Earth rotation angle
+        earth_rotation = self.simulation.state.time * self.simulation.earth_rotation_rate
+        
         # Draw Earth
         self.renderer.draw_earth(self.camera)
         
@@ -250,8 +253,24 @@ class Visualizer:
             self.simulation.state.active_links
         )
         
+        # Draw base station links
+        self.renderer.draw_base_station_links(
+            self.camera,
+            self.simulation.base_stations,
+            self.simulation.satellites,
+            self.simulation.state.base_station_links,
+            earth_rotation
+        )
+        
         # Draw satellites
         self.renderer.draw_satellites(self.camera, self.simulation.satellites)
+        
+        # Draw base stations
+        self.renderer.draw_base_stations(
+            self.camera,
+            self.simulation.base_stations,
+            earth_rotation
+        )
         
         # Draw info panel
         self.renderer.draw_info_panel(
@@ -381,6 +400,7 @@ def run_visualizer(
     print(f"Created {constellation_type} constellation:")
     print(f"  Satellites: {visualizer.simulation.num_satellites}")
     print(f"  Orbits: {visualizer.simulation.num_orbits}")
+    print(f"  Base Stations: {len(visualizer.simulation.base_stations)}")
     
     visualizer.run()
 
