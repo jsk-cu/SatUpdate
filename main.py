@@ -2,15 +2,15 @@
 """
 SatUpdate - Satellite Constellation Simulator
 
-Main entry point for running satellite constellation simulations with
-optional visualization.
+Command-line entry point for running satellite constellation simulations
+with optional visualization.
 
 Usage:
-    python main.py                           # Default Walker-Delta constellation
-    python main.py --type walker_star        # Walker-Star (polar) constellation
-    python main.py --type random --num 10    # 10 random satellites
-    python main.py --headless --duration 3600  # Headless simulation
-    python main.py --help                    # Show all options
+    python main.py                                  # Default Walker-Delta
+    python main.py --type walker_star               # Walker-Star (polar)
+    python main.py --type random --num 10           # 10 random satellites
+    python main.py --headless --duration 3600       # Headless simulation
+    python main.py --help                           # Show all options
 """
 
 import argparse
@@ -24,142 +24,227 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py                              # Default Walker-Delta (3 planes × 4 sats)
-  python main.py --type walker_delta -p 6 -s 8  # 6 planes × 8 satellites
-  python main.py --type walker_star -p 4 -s 6   # Polar constellation
-  python main.py --type random --num 15         # 15 random satellites
-  python main.py --headless --duration 7200     # 2-hour headless run
+  %(prog)s                                    # Default Walker-Delta (3×4 sats)
+  %(prog)s --type walker_delta -p 6 -s 8      # 6 planes × 8 satellites
+  %(prog)s --type walker_star -p 4 -s 6       # Polar constellation
+  %(prog)s --type random --num 15             # 15 random satellites
+  %(prog)s --headless --duration 7200         # 2-hour headless run
+  %(prog)s --bs-range 5000 --comm-range 3000  # Custom communication ranges
 
-Controls (when visualizing):
+Controls (visualization mode):
   Arrow keys  : Rotate camera
   +/-         : Zoom in/out
   [ ]         : Decrease/increase time scale
   SPACE       : Pause/Resume
   R           : Regenerate constellation
   ESC         : Quit
-        """
+        """,
     )
-    
+
+    # -------------------------------------------------------------------------
     # Constellation type
+    # -------------------------------------------------------------------------
     parser.add_argument(
-        "--type", "-t",
+        "--type",
+        "-t",
         type=str,
         choices=["walker_delta", "walker_star", "random"],
         default="walker_delta",
-        help="Constellation type (default: walker_delta)"
+        help="Constellation type (default: walker_delta)",
     )
-    
+
+    # -------------------------------------------------------------------------
     # Walker constellation parameters
+    # -------------------------------------------------------------------------
     parser.add_argument(
-        "--planes", "-p",
+        "--planes",
+        "-p",
         type=int,
         default=3,
-        help="Number of orbital planes for Walker constellations (default: 3)"
+        help="Number of orbital planes for Walker constellations (default: 3)",
     )
     parser.add_argument(
-        "--sats-per-plane", "-s",
+        "--sats-per-plane",
+        "-s",
         type=int,
         default=4,
-        help="Satellites per plane for Walker constellations (default: 4)"
+        help="Satellites per plane for Walker constellations (default: 4)",
     )
     parser.add_argument(
-        "--phasing", "-f",
+        "--phasing",
+        "-f",
         type=int,
         default=1,
-        help="Walker phasing parameter F (default: 1)"
+        help="Walker phasing parameter F (default: 1)",
     )
-    
+
+    # -------------------------------------------------------------------------
     # Random constellation parameters
+    # -------------------------------------------------------------------------
     parser.add_argument(
-        "--num", "-n",
+        "--num",
+        "-n",
         type=int,
         default=10,
-        help="Number of satellites for random constellation (default: 10)"
+        help="Number of satellites for random constellation (default: 10)",
     )
-    
+
+    # -------------------------------------------------------------------------
     # Orbital parameters
+    # -------------------------------------------------------------------------
     parser.add_argument(
-        "--altitude", "-a",
+        "--altitude",
+        "-a",
         type=float,
         default=550.0,
-        help="Orbital altitude in km (default: 550)"
+        help="Orbital altitude in km (default: 550)",
     )
     parser.add_argument(
-        "--inclination", "-i",
+        "--inclination",
+        "-i",
         type=float,
         default=53.0,
-        help="Orbital inclination in degrees (default: 53)"
+        help="Orbital inclination in degrees (default: 53)",
     )
-    
+
+    # -------------------------------------------------------------------------
+    # Communication parameters
+    # -------------------------------------------------------------------------
+    parser.add_argument(
+        "--comm-range",
+        type=float,
+        default=None,
+        help="Inter-satellite communication range in km (default: unlimited)",
+    )
+    parser.add_argument(
+        "--num-packets",
+        type=int,
+        default=100,
+        help="Number of packets in the software update (default: 100)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Agent controller selection
+    # -------------------------------------------------------------------------
+    parser.add_argument(
+        "--agent-controller",
+        type=str,
+        choices=["base", "min"],
+        default="min",
+        help="Agent controller type: 'base' (dummy, no requests), "
+             "'min' (orders by completion, requests lowest packets) (default: min)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Base station parameters
+    # -------------------------------------------------------------------------
+    parser.add_argument(
+        "--bs-latitude",
+        type=float,
+        default=0.0,
+        help="Base station latitude in degrees (default: 0)",
+    )
+    parser.add_argument(
+        "--bs-longitude",
+        type=float,
+        default=0.0,
+        help="Base station longitude in degrees (default: 0)",
+    )
+    parser.add_argument(
+        "--bs-altitude",
+        type=float,
+        default=0.0,
+        help="Base station altitude above sea level in km (default: 0)",
+    )
+    parser.add_argument(
+        "--bs-range",
+        type=float,
+        default=10000.0,
+        help="Base station communication range in km (default: 10000)",
+    )
+
+    # -------------------------------------------------------------------------
     # Simulation control
+    # -------------------------------------------------------------------------
     parser.add_argument(
         "--time-scale",
         type=float,
         default=60.0,
-        help="Time scale (sim seconds per real second, default: 60)"
+        help="Time scale: sim seconds per real second (default: 60)",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=None,
-        help="Random seed for reproducibility"
+        help="Random seed for reproducibility",
     )
     parser.add_argument(
         "--paused",
         action="store_true",
-        help="Start with simulation paused"
+        help="Start with simulation paused",
     )
-    
+
+    # -------------------------------------------------------------------------
     # Headless mode
+    # -------------------------------------------------------------------------
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run simulation without visualization"
+        help="Run simulation without visualization",
     )
     parser.add_argument(
         "--duration",
         type=float,
         default=3600.0,
-        help="Simulation duration in seconds for headless mode (default: 3600)"
+        help="Simulation duration in seconds for headless mode (default: 3600)",
     )
     parser.add_argument(
         "--timestep",
         type=float,
         default=60.0,
-        help="Simulation timestep in seconds for headless mode (default: 60)"
+        help="Simulation timestep in seconds for headless mode (default: 60)",
     )
-    
+
+    # -------------------------------------------------------------------------
     # Window settings
+    # -------------------------------------------------------------------------
     parser.add_argument(
         "--width",
         type=int,
         default=1000,
-        help="Window width in pixels (default: 1000)"
+        help="Window width in pixels (default: 1000)",
     )
     parser.add_argument(
         "--height",
         type=int,
         default=800,
-        help="Window height in pixels (default: 800)"
+        help="Window height in pixels (default: 800)",
     )
-    
+
     args = parser.parse_args()
-    
+
+    # -------------------------------------------------------------------------
     # Import simulation components
+    # -------------------------------------------------------------------------
     from simulation import (
         Simulation,
         SimulationConfig,
         ConstellationType,
     )
-    
-    # Map string type to enum
+    from agents import get_agent_class
+
     type_map = {
         "walker_delta": ConstellationType.WALKER_DELTA,
         "walker_star": ConstellationType.WALKER_STAR,
         "random": ConstellationType.RANDOM,
     }
-    
+
+    # Get the selected agent class
+    agent_class = get_agent_class(args.agent_controller)
+
+    # -------------------------------------------------------------------------
     # Create simulation configuration
+    # -------------------------------------------------------------------------
     config = SimulationConfig(
         constellation_type=type_map[args.type],
         num_planes=args.planes,
@@ -169,13 +254,24 @@ Controls (when visualizing):
         inclination=math.radians(args.inclination),
         phasing_parameter=args.phasing,
         random_seed=args.seed,
+        communication_range=args.comm_range,
+        num_packets=args.num_packets,
+        base_station_latitude=args.bs_latitude,
+        base_station_longitude=args.bs_longitude,
+        base_station_altitude=args.bs_altitude,
+        base_station_range=args.bs_range,
+        agent_class=agent_class,
     )
-    
+
+    # -------------------------------------------------------------------------
     # Create and initialize simulation
+    # -------------------------------------------------------------------------
     sim = Simulation(config)
     sim.initialize()
-    
-    # Print constellation info
+
+    # -------------------------------------------------------------------------
+    # Print configuration summary
+    # -------------------------------------------------------------------------
     print("=" * 60)
     print("SatUpdate - Satellite Constellation Simulator")
     print("=" * 60)
@@ -184,50 +280,83 @@ Controls (when visualizing):
     print(f"Orbital Planes: {sim.num_orbits}")
     print(f"Altitude: {args.altitude} km")
     print(f"Inclination: {args.inclination}°")
-    
+
     if args.type != "random":
         print(f"Phasing Parameter: {args.phasing}")
-    
+
     if sim.satellites:
         period = sim.satellites[0].orbit.period
         print(f"Orbital Period: {period/60:.1f} min")
-    
+
+    print(f"\nPackets in Update: {args.num_packets}")
+    print(f"Agent Controller: {args.agent_controller} ({agent_class.description})")
+    if args.comm_range is not None:
+        print(f"Inter-satellite Range: {args.comm_range} km")
+    else:
+        print("Inter-satellite Range: Unlimited")
+
+    print(f"\nBase Station:")
+    print(f"  Location: ({args.bs_latitude}°, {args.bs_longitude}°)")
+    print(f"  Altitude: {args.bs_altitude} km")
+    print(f"  Range: {args.bs_range} km")
+
+    # -------------------------------------------------------------------------
+    # Run simulation
+    # -------------------------------------------------------------------------
     if args.headless:
-        # Run headless simulation
         print(f"\n{'=' * 60}")
         print(f"Running headless simulation for {args.duration:.0f} seconds...")
         print(f"Timestep: {args.timestep:.1f} seconds")
         print(f"{'=' * 60}")
-        
+
         elapsed = 0.0
-        report_interval = max(600, args.duration / 10)  # Report at most 10 times
+        report_interval = max(600, args.duration / 10)
         next_report = report_interval
-        
+
         while elapsed < args.duration:
             sim.step(args.timestep)
             elapsed += args.timestep
-            
+
             if elapsed >= next_report:
                 print(f"\nTime: {elapsed/60:.1f} minutes")
-                
-                # Show sample satellite positions
+
+                # Sample satellite positions
                 for sat_id, geo in list(sim.state.satellite_positions.items())[:3]:
-                    print(f"  {sat_id}: alt={geo.altitude:.0f} km, "
-                          f"lat={geo.latitude_deg:+.1f}°, lon={geo.longitude_deg:+.1f}°")
-                
+                    print(
+                        f"  {sat_id}: alt={geo.altitude:.0f} km, "
+                        f"lat={geo.latitude_deg:+.1f}°, lon={geo.longitude_deg:+.1f}°"
+                    )
+
                 if sim.num_satellites > 3:
                     print(f"  ... and {sim.num_satellites - 3} more satellites")
-                
+
+                # Show update progress
+                stats = sim.state.agent_statistics
+                print(f"  Update progress: {stats.average_completion:.1f}% average")
+                print(
+                    f"  Fully updated: {stats.fully_updated_count}/{sim.num_satellites}"
+                )
+
                 next_report += report_interval
-        
+
+                # Check if update complete
+                if sim.is_update_complete():
+                    print("\n*** All satellites have received the complete update! ***")
+                    break
+
         # Final summary
         print(f"\n{'=' * 60}")
         print("Simulation Complete!")
         print(f"{'=' * 60}")
         print(f"Final simulation time: {sim.simulation_time:.0f} seconds")
         print(f"Steps executed: {sim.state.step_count}")
-        
-        # Calculate inter-satellite statistics
+
+        stats = sim.state.agent_statistics
+        print(f"\nUpdate Distribution:")
+        print(f"  Average completion: {stats.average_completion:.1f}%")
+        print(f"  Fully updated: {stats.fully_updated_count}/{sim.num_satellites}")
+
+        # Inter-satellite statistics
         distances = sim.get_inter_satellite_distances()
         if distances:
             min_dist = min(distances.values())
@@ -237,13 +366,16 @@ Controls (when visualizing):
             print(f"  Min: {min_dist:.0f} km")
             print(f"  Max: {max_dist:.0f} km")
             print(f"  Avg: {avg_dist:.0f} km")
-        
+
         los_matrix = sim.get_line_of_sight_matrix()
         if los_matrix:
             visible = sum(1 for v in los_matrix.values() if v)
             total = len(los_matrix)
-            print(f"\nLine of sight: {visible}/{total} pairs visible ({visible/total*100:.1f}%)")
-    
+            print(
+                f"\nLine of sight: {visible}/{total} pairs "
+                f"({visible/total*100:.1f}%)"
+            )
+
     else:
         # Run with visualization
         try:
@@ -252,7 +384,7 @@ Controls (when visualizing):
             print(f"\nError: Could not import visualization module: {e}")
             print("Try running with --headless flag for simulation without graphics.")
             sys.exit(1)
-        
+
         print(f"\n{'=' * 60}")
         print("Starting Visualization")
         print(f"{'=' * 60}")
@@ -263,19 +395,17 @@ Controls (when visualizing):
         print("  SPACE       : Pause/Resume")
         print("  R           : Regenerate constellation")
         print("  ESC         : Quit")
+        print("\nSatellite colors: Red (0%) -> Yellow (50%) -> Green (100%)")
         print()
-        
+
         visualizer = Visualizer(
             width=args.width,
             height=args.height,
             time_scale=args.time_scale,
-            paused=args.paused
+            paused=args.paused,
         )
-        
-        # Set the simulation we created
+
         visualizer.set_simulation(sim)
-        
-        # Run the visualization
         visualizer.run()
 
 

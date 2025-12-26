@@ -2,22 +2,22 @@
 """
 Example: Running Satellite Constellation Simulations
 
-This script demonstrates how to run simulations without visualization,
-which is useful for:
-- Running simulations faster than real-time
+Demonstrates how to run simulations programmatically without visualization.
+Useful for:
 - Batch processing and data collection
-- Testing communication algorithms
+- Testing distribution algorithms
 - Running on headless servers
+- Performance analysis
 """
 
 import math
 import sys
 import os
 
-# Add parent of SatUpdate to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from SatUpdate.simulation import (
+from simulation import (
     Simulation,
     SimulationConfig,
     ConstellationType,
@@ -29,281 +29,267 @@ from SatUpdate.simulation import (
 )
 
 
-def example_using_simulation_class():
+def example_basic_simulation():
     """
-    Example using the high-level Simulation class.
+    Basic example using the Simulation class.
     """
     print("=" * 70)
-    print("Example 1: Using the Simulation Class")
+    print("Example 1: Basic Simulation")
     print("=" * 70)
-    
-    # Create a simulation configuration
+
+    config = SimulationConfig(
+        constellation_type=ConstellationType.WALKER_DELTA,
+        num_planes=3,
+        sats_per_plane=4,
+        altitude=550,
+        inclination=math.radians(53),
+        num_packets=50,
+    )
+
+    sim = Simulation(config)
+    sim.initialize()
+
+    print(f"\nCreated constellation:")
+    print(f"  Satellites: {sim.num_satellites}")
+    print(f"  Orbital planes: {sim.num_orbits}")
+    print(f"  Packets: {config.num_packets}")
+
+    # Run until complete or timeout
+    print("\nRunning simulation...")
+    max_steps = 100
+    for step in range(max_steps):
+        sim.step(60)
+
+        if (step + 1) % 20 == 0:
+            stats = sim.state.agent_statistics
+            print(
+                f"  Step {step+1}: {stats.average_completion:.1f}% avg, "
+                f"{stats.fully_updated_count}/{sim.num_satellites} complete"
+            )
+
+        if sim.is_update_complete():
+            print(f"\n  Update complete at step {step+1}!")
+            break
+
+    stats = sim.state.agent_statistics
+    print(f"\nFinal state:")
+    print(f"  Time: {sim.simulation_time/60:.1f} minutes")
+    print(f"  Average completion: {stats.average_completion:.1f}%")
+    print(f"  Fully updated: {stats.fully_updated_count}/{sim.num_satellites}")
+
+
+def example_custom_base_station():
+    """
+    Example with custom base station location.
+    """
+    print("\n" + "=" * 70)
+    print("Example 2: Custom Base Station Location")
+    print("=" * 70)
+
+    # Base station in New York
     config = SimulationConfig(
         constellation_type=ConstellationType.WALKER_DELTA,
         num_planes=4,
-        sats_per_plane=6,
+        sats_per_plane=4,
         altitude=550,
         inclination=math.radians(53),
-        phasing_parameter=1,
+        num_packets=30,
+        base_station_latitude=40.7128,
+        base_station_longitude=-74.0060,
+        base_station_range=5000,
     )
-    
-    # Create and initialize the simulation
+
     sim = Simulation(config)
     sim.initialize()
-    
-    print(f"\nCreated simulation: {sim}")
-    print(f"Total satellites: {sim.num_satellites}")
-    print(f"Orbital planes: {sim.num_orbits}")
-    
-    # Run simulation for 30 minutes with 1-minute timesteps
-    print("\nRunning simulation for 30 minutes...")
-    
-    for minute in range(30):
-        sim.step(60)  # 60 second timestep
-        
-        if (minute + 1) % 10 == 0:
-            print(f"\n  After {minute + 1} minutes:")
-            # Show first 3 satellites
-            for sat_id, geo in list(sim.state.satellite_positions.items())[:3]:
-                print(f"    {sat_id}: alt={geo.altitude:.0f} km, "
-                      f"lat={geo.latitude_deg:+.1f}°, lon={geo.longitude_deg:+.1f}°")
-    
-    # Get final statistics
-    print(f"\n  Final state:")
-    print(f"    Simulation time: {sim.simulation_time:.0f} seconds")
-    print(f"    Steps executed: {sim.state.step_count}")
-    
-    # Calculate line of sight statistics
-    los_matrix = sim.get_line_of_sight_matrix()
-    visible = sum(1 for v in los_matrix.values() if v)
-    total = len(los_matrix)
-    print(f"    LOS pairs: {visible}/{total} ({visible/total*100:.1f}%)")
-    
-    return sim
+
+    print(f"\nBase station: New York ({config.base_station_latitude}°, "
+          f"{config.base_station_longitude}°)")
+    print(f"Range: {config.base_station_range} km")
+
+    # Run for a few steps and check base station connectivity
+    for _ in range(10):
+        sim.step(60)
+
+    bs_links = sim.state.base_station_links
+    print(f"\nAfter 10 minutes:")
+    print(f"  Satellites in range of base station: {len(bs_links)}")
+
+    if bs_links:
+        print("  Connected satellites:")
+        for bs_name, sat_id in list(bs_links)[:5]:
+            geo = sim.state.satellite_positions.get(sat_id)
+            if geo:
+                print(f"    {sat_id}: lat={geo.latitude_deg:+.1f}°, "
+                      f"lon={geo.longitude_deg:+.1f}°")
 
 
-def example_walker_delta_constellation():
+def example_communication_range():
     """
-    Example directly creating a Walker-Delta constellation.
+    Example comparing unlimited vs limited communication range.
     """
     print("\n" + "=" * 70)
-    print("Example 2: Walker-Delta Constellation (Direct Creation)")
+    print("Example 3: Communication Range Comparison")
     print("=" * 70)
-    
-    # Create a Walker-Delta constellation: 6 planes, 8 satellites per plane
-    orbits, satellites = create_walker_delta_constellation(
-        num_planes=6,
-        sats_per_plane=8,
-        altitude=550,  # km
+
+    base_config = dict(
+        constellation_type=ConstellationType.WALKER_DELTA,
+        num_planes=3,
+        sats_per_plane=4,
+        altitude=550,
         inclination=math.radians(53),
-        phasing_parameter=1
+        num_packets=30,
+        random_seed=42,
     )
-    
-    print(f"\nCreated constellation with {len(satellites)} satellites")
-    print(f"Orbital altitude: 550 km")
-    print(f"Inclination: 53°")
-    
-    # Get orbital period from first satellite
-    period = satellites[0].orbit.period
-    print(f"Orbital period: {period/60:.1f} minutes")
-    
-    # Simulate for one full orbit
-    print("\nSimulating one complete orbit...")
-    
-    timestep = 60.0  # 1 minute timestep
-    sim_time = 0.0
-    
-    # Track visibility statistics
-    visibility_samples = []
-    
-    while sim_time < period:
-        # Count line-of-sight connections
-        visible_pairs = 0
-        total_pairs = 0
-        
-        for i, sat_a in enumerate(satellites):
-            for sat_b in satellites[i+1:]:
-                total_pairs += 1
-                if sat_a.has_line_of_sight(sat_b):
-                    visible_pairs += 1
-        
-        visibility_samples.append(visible_pairs / total_pairs * 100)
-        
-        # Advance all satellites
-        for sat in satellites:
-            sat.step(timestep)
-        
-        sim_time += timestep
-        
-        # Print progress every 15 minutes
-        if int(sim_time) % 900 == 0:
-            print(f"  t={sim_time/60:5.1f} min: "
-                  f"{visible_pairs}/{total_pairs} pairs visible "
-                  f"({visibility_samples[-1]:.1f}%)")
-    
-    # Summary statistics
-    avg_visibility = sum(visibility_samples) / len(visibility_samples)
-    min_visibility = min(visibility_samples)
-    max_visibility = max(visibility_samples)
-    
-    print(f"\nVisibility Statistics:")
-    print(f"  Average visibility: {avg_visibility:.1f}%")
-    print(f"  Minimum visibility: {min_visibility:.1f}%")
-    print(f"  Maximum visibility: {max_visibility:.1f}%")
+
+    # Run with unlimited range
+    config_unlimited = SimulationConfig(**base_config, communication_range=None)
+    sim_unlimited = Simulation(config_unlimited)
+    sim_unlimited.initialize()
+
+    # Run with limited range
+    config_limited = SimulationConfig(**base_config, communication_range=2000)
+    sim_limited = Simulation(config_limited)
+    sim_limited.initialize()
+
+    print("\nComparing unlimited vs 2000 km communication range:")
+
+    for step in range(50):
+        sim_unlimited.step(60)
+        sim_limited.step(60)
+
+        if (step + 1) % 10 == 0:
+            stats_u = sim_unlimited.state.agent_statistics
+            stats_l = sim_limited.state.agent_statistics
+            links_u = len(sim_unlimited.state.active_links)
+            links_l = len(sim_limited.state.active_links)
+
+            print(f"\n  Step {step+1}:")
+            print(f"    Unlimited: {stats_u.average_completion:.1f}% avg, "
+                  f"{links_u} active links")
+            print(f"    Limited:   {stats_l.average_completion:.1f}% avg, "
+                  f"{links_l} active links")
+
+        if sim_unlimited.is_update_complete() and sim_limited.is_update_complete():
+            break
 
 
-def example_walker_star_constellation():
+def example_walker_star():
     """
-    Example creating a Walker-Star (polar) constellation.
+    Example with Walker-Star (polar) constellation.
     """
     print("\n" + "=" * 70)
-    print("Example 3: Walker-Star (Polar) Constellation")
+    print("Example 4: Walker-Star Polar Constellation")
     print("=" * 70)
-    
-    # Create a Walker-Star constellation for polar coverage
+
     orbits, satellites = create_walker_star_constellation(
         num_planes=6,
         sats_per_plane=6,
-        altitude=780,  # km (similar to Iridium)
-        inclination=math.radians(86.4),  # Near-polar
-        phasing_parameter=1
+        altitude=780,
+        inclination=math.radians(86.4),
+        phasing_parameter=1,
     )
-    
-    print(f"\nCreated polar constellation with {len(satellites)} satellites")
-    print(f"Orbital altitude: 780 km")
-    print(f"Inclination: 86.4°")
-    print(f"Orbital period: {satellites[0].orbit.period/60:.1f} minutes")
-    
-    # Show initial satellite distribution
-    print("\nInitial satellite positions:")
-    for i, sat in enumerate(satellites[:6]):
+
+    print(f"\nCreated polar constellation:")
+    print(f"  Satellites: {len(satellites)}")
+    print(f"  Altitude: 780 km")
+    print(f"  Inclination: 86.4°")
+    print(f"  Orbital period: {satellites[0].orbit.period/60:.1f} minutes")
+
+    # Show initial positions
+    print("\nSample satellite positions:")
+    for sat in satellites[:6]:
         geo = sat.get_geospatial_position()
-        print(f"  {sat.satellite_id}: lat={geo.latitude_deg:+.1f}°, lon={geo.longitude_deg:+.1f}°")
-    print(f"  ... and {len(satellites) - 6} more")
+        print(f"  {sat.satellite_id}: lat={geo.latitude_deg:+6.1f}°, "
+              f"lon={geo.longitude_deg:+7.1f}°")
 
 
 def example_elliptical_orbit():
     """
-    Example creating a highly elliptical (Molniya-type) orbit.
+    Example with highly elliptical (Molniya-type) orbit.
     """
     print("\n" + "=" * 70)
-    print("Example 4: Highly Elliptical (Molniya) Orbit")
+    print("Example 5: Highly Elliptical (Molniya) Orbit")
     print("=" * 70)
-    
-    # Create a Molniya-type orbit
-    molniya_orbit = EllipticalOrbit(
-        apoapsis=EARTH_RADIUS_KM + 39873,  # ~40,000 km altitude
-        periapsis=EARTH_RADIUS_KM + 500,    # ~500 km altitude
-        inclination=math.radians(63.4),     # Critical inclination
+
+    molniya = EllipticalOrbit(
+        apoapsis=EARTH_RADIUS_KM + 39873,
+        periapsis=EARTH_RADIUS_KM + 500,
+        inclination=math.radians(63.4),
         longitude_of_ascending_node=math.radians(45),
-        argument_of_periapsis=math.radians(270),  # Apoapsis over northern hemisphere
+        argument_of_periapsis=math.radians(270),
     )
-    
-    satellite = Satellite(molniya_orbit, initial_position=0.0, satellite_id="MOLNIYA-1")
-    
-    print(f"\nMolniya orbit parameters:")
-    print(f"  Periapsis altitude: {molniya_orbit.periapsis_altitude:.0f} km")
-    print(f"  Apoapsis altitude: {molniya_orbit.apoapsis_altitude:.0f} km")
-    print(f"  Eccentricity: {molniya_orbit.eccentricity:.4f}")
-    print(f"  Period: {molniya_orbit.period/3600:.1f} hours")
-    
-    # Show position and velocity throughout orbit
-    print("\nPosition and velocity throughout orbit:")
-    print(f"{'Position':^10} {'Altitude (km)':^15} {'Speed (km/s)':^15} {'Lat':^10}")
-    print("-" * 60)
-    
-    for pos_frac in [0.0, 0.2, 0.4, 0.5, 0.6, 0.8]:
-        satellite.position = pos_frac
+
+    satellite = Satellite(molniya, initial_position=0.0, satellite_id="MOLNIYA-1")
+
+    print(f"\nMolniya orbit:")
+    print(f"  Periapsis altitude: {molniya.periapsis_altitude:.0f} km")
+    print(f"  Apoapsis altitude: {molniya.apoapsis_altitude:.0f} km")
+    print(f"  Eccentricity: {molniya.eccentricity:.4f}")
+    print(f"  Period: {molniya.period/3600:.1f} hours")
+
+    print("\nPosition throughout orbit:")
+    print(f"{'Position':^10} {'Altitude (km)':^15} {'Speed (km/s)':^12} {'Lat':^10}")
+    print("-" * 50)
+
+    for pos in [0.0, 0.2, 0.4, 0.5, 0.6, 0.8]:
+        satellite.position = pos
         geo = satellite.get_geospatial_position()
         speed = satellite.get_speed()
-        
-        print(f"{pos_frac:^10.1f} {geo.altitude:^15,.0f} {speed:^15.2f} "
+        print(f"{pos:^10.1f} {geo.altitude:^15,.0f} {speed:^12.2f} "
               f"{geo.latitude_deg:^+10.1f}")
 
 
-def example_communication_simulation():
+def example_batch_comparison():
     """
-    Example simulating communication windows between satellites.
+    Example batch analysis comparing different configurations.
     """
     print("\n" + "=" * 70)
-    print("Example 5: Inter-Satellite Communication Simulation")
+    print("Example 6: Batch Configuration Comparison")
     print("=" * 70)
-    
-    # Create two satellites in different orbits
-    leo_orbit = EllipticalOrbit(
-        apoapsis=EARTH_RADIUS_KM + 550,
-        periapsis=EARTH_RADIUS_KM + 550,
-        inclination=math.radians(53),
-        longitude_of_ascending_node=0,
-        argument_of_periapsis=0,
-    )
-    leo_sat = Satellite(leo_orbit, initial_position=0.0, satellite_id="LEO-1")
-    
-    geo_orbit = EllipticalOrbit(
-        apoapsis=EARTH_RADIUS_KM + 35786,
-        periapsis=EARTH_RADIUS_KM + 35786,
-        inclination=math.radians(0),
-        longitude_of_ascending_node=0,
-        argument_of_periapsis=0,
-    )
-    geo_sat = Satellite(geo_orbit, initial_position=0.0, satellite_id="GEO-1")
-    
-    print(f"\nSatellite configuration:")
-    print(f"  LEO: {leo_sat.satellite_id} at {leo_orbit.periapsis_altitude:.0f} km")
-    print(f"  GEO: {geo_sat.satellite_id} at {geo_orbit.periapsis_altitude:.0f} km")
-    
-    # Track communication windows over one LEO orbit
-    print("\nTracking communication windows...")
-    
-    timestep = 30.0  # 30 second timestep
-    sim_time = 0.0
-    period = leo_sat.orbit.period
-    
-    in_contact = False
-    contact_start = None
-    total_contact_time = 0.0
-    contact_count = 0
-    
-    while sim_time < period:
-        los = leo_sat.has_line_of_sight(geo_sat)
-        distance = leo_sat.distance_to(geo_sat)
-        
-        if los and not in_contact:
-            in_contact = True
-            contact_start = sim_time
-            contact_count += 1
-            print(f"  Contact {contact_count} START at t={sim_time/60:.1f} min, "
-                  f"distance={distance:.0f} km")
-        elif not los and in_contact:
-            in_contact = False
-            contact_duration = sim_time - contact_start
-            total_contact_time += contact_duration
-            print(f"  Contact {contact_count} END at t={sim_time/60:.1f} min, "
-                  f"duration={contact_duration/60:.1f} min")
-        
-        leo_sat.step(timestep)
-        geo_sat.step(timestep)
-        sim_time += timestep
-    
-    # Handle ongoing contact at end
-    if in_contact:
-        contact_duration = sim_time - contact_start
-        total_contact_time += contact_duration
-    
-    print(f"\nSummary:")
-    print(f"  Total contact windows: {contact_count}")
-    print(f"  Total contact time: {total_contact_time/60:.1f} min "
-          f"({total_contact_time/period*100:.1f}% of LEO orbit)")
+
+    configurations = [
+        {"num_planes": 2, "sats_per_plane": 4},
+        {"num_planes": 3, "sats_per_plane": 4},
+        {"num_planes": 4, "sats_per_plane": 4},
+        {"num_planes": 4, "sats_per_plane": 6},
+    ]
+
+    print("\nComparing update completion time:")
+    print(f"{'Config':^15} {'Satellites':^12} {'Steps':^10} {'Time (min)':^12}")
+    print("-" * 55)
+
+    for cfg in configurations:
+        config = SimulationConfig(
+            constellation_type=ConstellationType.WALKER_DELTA,
+            altitude=550,
+            inclination=math.radians(53),
+            num_packets=30,
+            random_seed=42,
+            **cfg,
+        )
+
+        sim = Simulation(config)
+        sim.initialize()
+
+        steps = 0
+        while not sim.is_update_complete() and steps < 500:
+            sim.step(60)
+            steps += 1
+
+        config_str = f"{cfg['num_planes']}×{cfg['sats_per_plane']}"
+        print(f"{config_str:^15} {sim.num_satellites:^12} {steps:^10} "
+              f"{sim.simulation_time/60:^12.1f}")
 
 
 def main():
     """Run all examples."""
-    example_using_simulation_class()
-    example_walker_delta_constellation()
-    example_walker_star_constellation()
+    example_basic_simulation()
+    example_custom_base_station()
+    example_communication_range()
+    example_walker_star()
     example_elliptical_orbit()
-    example_communication_simulation()
-    
+    example_batch_comparison()
+
     print("\n" + "=" * 70)
     print("All examples complete!")
     print("=" * 70)

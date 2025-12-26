@@ -1,217 +1,231 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Base Agent Class for Satellite Constellation Packet Distribution
+Base Agent - Abstract Base Class for Packet Distribution Agents
 
-Provides a template class for agents that manage packet distribution
-in a satellite constellation. Each satellite and the base station
-receives an agent that decides how to broadcast state, make requests,
-and fulfill requests from neighbors.
+Provides the base class that all agent implementations should subclass.
+The BaseAgent defines:
+1. The 4-phase protocol interface (broadcast, request, respond, receive)
+2. Common state management (packets, completion tracking)
+3. Default implementations that can be overridden
 
-The protocol runs in 4 phases each timestep:
-1. broadcast_state() - All agents broadcast their state
-2. make_requests() - All agents request packets from neighbors
-3. receive_requests_and_update() - All agents decide what to send
-4. receive_packets_and_update() - All agents receive packets
+Subclasses typically only need to override `make_requests()` to implement
+their distribution strategy. The default implementation makes no requests,
+which can serve as a control case for testing.
 """
 
-from typing import Any, Dict, Optional, Set
+from typing import Dict, Set, Optional, Any
 
 
-class Agent:
+class BaseAgent:
     """
-    Base template class for satellite constellation agents.
-    
-    This template class provides the interface for agents that manage
-    packet distribution in a satellite constellation. Subclasses should
-    implement the actual logic for deciding what to broadcast, request,
-    and send.
-    
+    Base class for packet distribution agents.
+
+    This class provides the complete protocol interface and default
+    implementations. Subclasses should override `make_requests()` to
+    implement custom distribution strategies.
+
+    The default `make_requests()` returns an empty dictionary (no requests),
+    making this usable as a "null" agent for control experiments.
+
     Parameters
     ----------
     agent_id : int
-        Unique integer identifier for this agent
+        Unique identifier. 0 = base station, 1+ = satellites.
     num_packets : int
-        Total number of packets that make up the software update
+        Total packets in the software update.
     num_satellites : int
-        Total number of satellites in the constellation
+        Total satellites in the constellation.
     is_base_station : bool
-        True if this agent represents the base station (which starts
-        with all packets), False for satellite agents
-    
+        True if this is the base station agent.
+
     Attributes
     ----------
     agent_id : int
-        This agent's unique identifier
+        Agent identifier.
     num_packets : int
-        Total packets in the update
-    num_satellites : int
-        Total satellites in constellation
-    is_base_station : bool
-        Whether this is the base station agent
+        Total packets in update.
     packets : Set[int]
-        Set of packet indices this agent currently has
+        Packet indices this agent has received.
+    is_base_station : bool
+        Whether this is the base station.
+
+    Examples
+    --------
+    Subclassing to create a custom agent:
+
+    >>> class MyAgent(BaseAgent):
+    ...     name = "my_agent"
+    ...     description = "My custom strategy"
+    ...
+    ...     def make_requests(self, neighbor_broadcasts):
+    ...         # Custom logic here
+    ...         requests = {}
+    ...         missing = self.get_missing_packets()
+    ...         for neighbor_id, broadcast in neighbor_broadcasts.items():
+    ...             available = missing & broadcast.get("packets", set())
+    ...             if available:
+    ...                 requests[neighbor_id] = min(available)
+    ...         return requests
     """
-    
+
+    # Agent type name for registry - subclasses should override
+    name = "base"
+    description = "Base agent: makes no requests (no distribution occurs)"
+
     def __init__(
         self,
         agent_id: int,
         num_packets: int,
         num_satellites: int,
-        is_base_station: bool = False
+        is_base_station: bool = False,
     ):
         self.agent_id = agent_id
         self.num_packets = num_packets
         self.num_satellites = num_satellites
         self.is_base_station = is_base_station
-        
-        # Initialize packet set
-        # Base station starts with all packets
-        # Satellites start with no packets
+
+        # Base station starts with all packets; satellites start empty
         if is_base_station:
             self.packets: Set[int] = set(range(num_packets))
         else:
             self.packets: Set[int] = set()
-    
-    def broadcast_state(self) -> Any:
+
+    def broadcast_state(self) -> Dict[str, Any]:
         """
-        Generate state information to broadcast to neighbors.
-        
-        This method is called at the start of each timestep. The returned
-        state will be provided to all neighboring agents when they call
-        make_requests().
-        
+        Phase 1: Broadcast current state to neighbors.
+
+        Called at the start of each protocol round. Returns information
+        about this agent's current state that neighbors can use to
+        decide what to request.
+
         Returns
         -------
-        Any
-            State information to broadcast. Format depends on implementation.
-            The template returns an empty dictionary.
+        dict
+            State information with keys:
+            - agent_id: This agent's ID
+            - packets: Set of packet indices held
+            - num_packets: Total packets in update
+            - is_base_station: Whether this is the base station
+            - completion: Completion percentage (0-100)
         """
-        return {}
-    
-    def make_requests(self, neighbor_broadcasts: Dict[int, Any]) -> Dict[int, int]:
+        return {
+            "agent_id": self.agent_id,
+            "packets": self.packets.copy(),
+            "num_packets": self.num_packets,
+            "is_base_station": self.is_base_station,
+            "completion": self.get_completion_percentage(),
+        }
+
+    def make_requests(
+        self, neighbor_broadcasts: Dict[int, Dict[str, Any]]
+    ) -> Dict[int, int]:
         """
-        Given broadcasts from neighbors, decide what packets to request.
-        
-        This method is called after all agents have broadcast their state.
-        The agent receives the broadcasts from all currently connected
-        neighbors and should return requests for packets it wants.
-        
+        Phase 2: Decide which packets to request from neighbors.
+
+        Override this method in subclasses to implement custom
+        distribution strategies.
+
+        The default implementation makes no requests, so no packets
+        are ever transferred. This is useful as a control case.
+
         Parameters
         ----------
-        neighbor_broadcasts : Dict[int, Any]
-            Dictionary mapping neighbor agent IDs to their broadcast state.
-            Only currently connected neighbors are included.
-        
+        neighbor_broadcasts : dict
+            Mapping of neighbor agent IDs to their broadcast state.
+            Each broadcast contains:
+            - packets: Set of packet indices the neighbor has
+            - completion: Neighbor's completion percentage
+            - is_base_station: Whether neighbor is the base station
+
         Returns
         -------
-        Dict[int, int]
-            Dictionary mapping neighbor agent IDs to packet indices to request.
-            Each neighbor can receive at most one request.
-            The template returns an empty dictionary (no requests).
+        dict
+            Mapping of neighbor IDs to requested packet indices.
+            Request at most one packet per neighbor.
+            Return empty dict to make no requests.
         """
+        # Default: no requests (subclasses override this)
         return {}
-    
+
     def receive_requests_and_update(
-        self,
-        requests: Dict[int, int]
+        self, requests: Dict[int, int]
     ) -> Dict[int, Optional[int]]:
         """
-        Receive requests from neighbors and decide what packets to send.
-        
-        This method is called after all agents have made their requests.
-        The agent receives all requests directed at it and should decide
-        which requests to fulfill.
-        
+        Phase 3: Process incoming requests and decide responses.
+
+        Default implementation grants all requests for packets we have.
+        Subclasses can override to implement bandwidth limits, priority
+        schemes, etc.
+
         Parameters
         ----------
-        requests : Dict[int, int]
-            Dictionary mapping requester agent IDs to the packet indices
-            they requested. Only neighbors who made requests are included.
-        
+        requests : dict
+            Mapping of requester agent IDs to requested packet indices.
+
         Returns
         -------
-        Dict[int, Optional[int]]
-            Dictionary mapping requester agent IDs to:
-            - The packet index to send (if fulfilling the request)
-            - None (if declining the request)
-            The template returns None for all requests.
+        dict
+            Mapping of requester IDs to packet indices being sent,
+            or None if request is denied.
         """
-        # Template: decline all requests
-        return {requester_id: None for requester_id in requests}
-    
+        responses = {}
+        for requester_id, packet_idx in requests.items():
+            if packet_idx in self.packets:
+                responses[requester_id] = packet_idx
+            else:
+                responses[requester_id] = None
+        return responses
+
     def receive_packets_and_update(
-        self,
-        packets: Dict[int, Optional[int]]
+        self, received: Dict[int, Optional[int]]
     ) -> None:
         """
-        Receive packets from neighbors and update local state.
-        
-        This method is called at the end of each timestep. The agent
-        receives the results of its requests - either the packet index
-        that was sent, or None if the request was declined.
-        
+        Phase 4: Receive packets and update local state.
+
         Parameters
         ----------
-        packets : Dict[int, Optional[int]]
-            Dictionary mapping sender agent IDs (the agents that were
-            requested from) to:
-            - The packet index that was sent (if request was fulfilled)
-            - None (if request was declined or couldn't be fulfilled)
+        received : dict
+            Mapping of sender agent IDs to received packet indices
+            (None if request was denied).
         """
-        # Template: do nothing
-        pass
-    
-    def has_all_packets(self) -> bool:
-        """
-        Check if this agent has received all packets.
-        
-        Returns
-        -------
-        bool
-            True if the agent has all num_packets packets
-        """
-        return len(self.packets) == self.num_packets
-    
+        for sender_id, packet_idx in received.items():
+            if packet_idx is not None:
+                self.packets.add(packet_idx)
+
+    # -------------------------------------------------------------------------
+    # Utility methods (generally don't need to be overridden)
+    # -------------------------------------------------------------------------
+
     def get_packet_count(self) -> int:
-        """
-        Get the number of packets this agent currently has.
-        
-        Returns
-        -------
-        int
-            Number of unique packets in this agent's possession
-        """
+        """Return number of packets this agent has."""
         return len(self.packets)
-    
-    def get_missing_packets(self) -> Set[int]:
-        """
-        Get the set of packet indices this agent is missing.
-        
-        Returns
-        -------
-        Set[int]
-            Set of packet indices not yet received
-        """
-        return set(range(self.num_packets)) - self.packets
-    
+
     def get_completion_percentage(self) -> float:
-        """
-        Get the percentage of packets this agent has received.
-        
-        Returns
-        -------
-        float
-            Percentage from 0.0 to 100.0
-        """
+        """Return percentage of packets received (0-100)."""
         if self.num_packets == 0:
             return 100.0
-        return (len(self.packets) / self.num_packets) * 100.0
-    
+        return 100.0 * len(self.packets) / self.num_packets
+
+    def has_all_packets(self) -> bool:
+        """Check if agent has all packets."""
+        return len(self.packets) >= self.num_packets
+
+    def get_missing_packets(self) -> Set[int]:
+        """Return set of missing packet indices."""
+        return set(range(self.num_packets)) - self.packets
+
+    def reset(self) -> None:
+        """Reset agent to initial state."""
+        if self.is_base_station:
+            self.packets = set(range(self.num_packets))
+        else:
+            self.packets = set()
+
     def __repr__(self) -> str:
+        class_name = self.__class__.__name__
         agent_type = "BaseStation" if self.is_base_station else "Satellite"
         return (
-            f"Agent(id={self.agent_id}, "
-            f"type={agent_type}, "
-            f"packets={len(self.packets)}/{self.num_packets})"
+            f"{class_name}({agent_type}-{self.agent_id}, "
+            f"packets={len(self.packets)}/{self.num_packets}, "
+            f"{self.get_completion_percentage():.1f}%)"
         )
