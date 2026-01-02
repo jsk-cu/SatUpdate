@@ -3,113 +3,105 @@
 """
 Network Backend Module
 
-Provides an abstract interface for network simulation that allows plugging
-in different network models. The default NativeNetworkBackend preserves
-existing behavior with instant, perfect packet delivery.
-
+Provides abstract interface and implementations for network simulation backends.
 This module implements Step 4 of the NS-3/SPICE integration plan.
 
 Features:
-- Abstract NetworkBackend interface for pluggable network models
-- NativeNetworkBackend with zero-latency perfect delivery (default)
-- Topology-aware packet routing
-- Network statistics collection
-- Ready for NS-3 backend integration (Steps 5-7)
+- Abstract NetworkBackend interface
+- NativeNetworkBackend for instant delivery
+- DelayedNetworkBackend for latency simulation
+- Statistics tracking and reporting
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import (
-    List, Dict, Set, Tuple, Optional, Any, Union, Callable
-)
-import logging
+from typing import List, Dict, Set, Tuple, Optional, Any
+
 import numpy as np
-
-
-logger = logging.getLogger(__name__)
 
 
 class DropReason(Enum):
     """Reasons for packet drops."""
-    NONE = "none"
     NO_ROUTE = "no_route"
     LINK_DOWN = "link_down"
     QUEUE_FULL = "queue_full"
     TIMEOUT = "timeout"
+    ERROR = "error"
     COLLISION = "collision"
-    OUT_OF_RANGE = "out_of_range"
-    INTERFERENCE = "interference"
 
 
 @dataclass
 class PacketTransfer:
     """
-    Represents a packet transfer between two nodes.
+    Record of a completed packet transfer.
     
     Attributes
     ----------
     source_id : str
-        ID of the sending node
+        Source node identifier
     destination_id : str
-        ID of the receiving node
+        Destination node identifier
     packet_id : int
-        Unique identifier of the packet content
+        Unique packet content identifier
     timestamp : float
         Simulation time when transfer completed
     success : bool
-        Whether the transfer was successful
-    latency_ms : float, optional
-        Transfer latency in milliseconds (None for instant)
+        Whether transfer succeeded
+    latency_ms : float
+        Transfer latency in milliseconds
     size_bytes : int
         Packet size in bytes
-    dropped_reason : DropReason, optional
-        Reason for drop if success is False
+    drop_reason : DropReason, optional
+        Reason for drop if not successful
     metadata : Dict, optional
-        Additional transfer metadata
+        Additional metadata
     """
     source_id: str
     destination_id: str
     packet_id: int
     timestamp: float
     success: bool
-    latency_ms: Optional[float] = None
-    size_bytes: int = 1024
-    dropped_reason: DropReason = DropReason.NONE
+    latency_ms: float = 0.0
+    size_bytes: int = 0
+    drop_reason: Optional[DropReason] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     
-    def __post_init__(self):
-        """Validate and set defaults."""
-        if not self.success and self.dropped_reason == DropReason.NONE:
-            self.dropped_reason = DropReason.NO_ROUTE
-    
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert to dictionary."""
         return {
-            "source_id": self.source_id,
-            "destination_id": self.destination_id,
+            "source": self.source_id,
+            "destination": self.destination_id,
             "packet_id": self.packet_id,
             "timestamp": self.timestamp,
             "success": self.success,
             "latency_ms": self.latency_ms,
             "size_bytes": self.size_bytes,
-            "dropped_reason": self.dropped_reason.value,
+            "drop_reason": self.drop_reason.value if self.drop_reason else None,
             "metadata": self.metadata,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PacketTransfer":
         """Create from dictionary."""
+        drop_reason = None
+        if data.get("drop_reason") or data.get("dropped_reason"):
+            reason_str = data.get("drop_reason") or data.get("dropped_reason")
+            try:
+                drop_reason = DropReason(reason_str)
+            except ValueError:
+                drop_reason = DropReason.ERROR
+        
         return cls(
-            source_id=data["source_id"],
-            destination_id=data["destination_id"],
-            packet_id=data["packet_id"],
-            timestamp=data["timestamp"],
-            success=data["success"],
-            latency_ms=data.get("latency_ms"),
-            size_bytes=data.get("size_bytes", 1024),
-            dropped_reason=DropReason(data.get("dropped_reason", "none")),
+            source_id=data.get("source", data.get("source_id", "")),
+            destination_id=data.get("destination", data.get("destination_id", "")),
+            packet_id=data.get("packet_id", 0),
+            timestamp=data.get("timestamp", 0.0),
+            success=data.get("success", True),
+            latency_ms=data.get("latency_ms", 0.0),
+            size_bytes=data.get("size_bytes", data.get("size", 0)),
+            drop_reason=drop_reason,
             metadata=data.get("metadata", {}),
         )
 
@@ -119,53 +111,54 @@ class NetworkStatistics:
     """
     Network performance statistics.
     
-    Attributes
-    ----------
-    total_packets_sent : int
-        Total number of packets sent
-    total_packets_received : int
-        Total number of packets successfully received
-    total_packets_dropped : int
-        Total number of packets dropped
-    total_bytes_sent : int
-        Total bytes sent
-    total_bytes_received : int
-        Total bytes successfully received
-    average_latency_ms : float
-        Average packet latency in milliseconds
-    min_latency_ms : float
-        Minimum observed latency
-    max_latency_ms : float
-        Maximum observed latency
-    throughput_bps : float
-        Current throughput in bits per second
-    link_utilization : Dict[Tuple[str, str], float]
-        Utilization per link (0.0 to 1.0)
-    drop_reasons : Dict[DropReason, int]
-        Count of drops by reason
+    Tracks packets sent, received, dropped, and latency metrics.
     """
     total_packets_sent: int = 0
     total_packets_received: int = 0
     total_packets_dropped: int = 0
     total_bytes_sent: int = 0
     total_bytes_received: int = 0
-    average_latency_ms: float = 0.0
+    
+    # Latency tracking
     min_latency_ms: float = float('inf')
     max_latency_ms: float = 0.0
-    throughput_bps: float = 0.0
-    link_utilization: Dict[Tuple[str, str], float] = field(default_factory=dict)
-    drop_reasons: Dict[DropReason, int] = field(default_factory=dict)
+    avg_latency_ms: float = 0.0
+    
+    # Internal tracking
+    _latency_sum: float = field(default=0.0, repr=False)
+    _latency_count: int = field(default=0, repr=False)
+    
+    def record_send(self, size_bytes: int) -> None:
+        """Record a packet send."""
+        self.total_packets_sent += 1
+        self.total_bytes_sent += size_bytes
+    
+    def record_receive(self, size_bytes: int, latency_ms: float) -> None:
+        """Record a successful packet receive."""
+        self.total_packets_received += 1
+        self.total_bytes_received += size_bytes
+        
+        self._latency_sum += latency_ms
+        self._latency_count += 1
+        
+        self.min_latency_ms = min(self.min_latency_ms, latency_ms)
+        self.max_latency_ms = max(self.max_latency_ms, latency_ms)
+        self.avg_latency_ms = self._latency_sum / self._latency_count
+    
+    def record_drop(self) -> None:
+        """Record a packet drop."""
+        self.total_packets_dropped += 1
     
     @property
     def delivery_ratio(self) -> float:
-        """Packet delivery ratio (0.0 to 1.0)."""
+        """Ratio of received to sent packets."""
         if self.total_packets_sent == 0:
             return 1.0
         return self.total_packets_received / self.total_packets_sent
     
     @property
     def drop_ratio(self) -> float:
-        """Packet drop ratio (0.0 to 1.0)."""
+        """Ratio of dropped to sent packets."""
         if self.total_packets_sent == 0:
             return 0.0
         return self.total_packets_dropped / self.total_packets_sent
@@ -177,38 +170,31 @@ class NetworkStatistics:
         self.total_packets_dropped = 0
         self.total_bytes_sent = 0
         self.total_bytes_received = 0
-        self.average_latency_ms = 0.0
         self.min_latency_ms = float('inf')
         self.max_latency_ms = 0.0
-        self.throughput_bps = 0.0
-        self.link_utilization.clear()
-        self.drop_reasons.clear()
+        self.avg_latency_ms = 0.0
+        self._latency_sum = 0.0
+        self._latency_count = 0
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """Convert to dictionary."""
         return {
             "total_packets_sent": self.total_packets_sent,
             "total_packets_received": self.total_packets_received,
             "total_packets_dropped": self.total_packets_dropped,
             "total_bytes_sent": self.total_bytes_sent,
             "total_bytes_received": self.total_bytes_received,
-            "average_latency_ms": self.average_latency_ms,
-            "min_latency_ms": self.min_latency_ms if self.min_latency_ms != float('inf') else None,
+            "min_latency_ms": self.min_latency_ms if self.min_latency_ms != float('inf') else 0,
             "max_latency_ms": self.max_latency_ms,
-            "throughput_bps": self.throughput_bps,
+            "avg_latency_ms": self.avg_latency_ms,
             "delivery_ratio": self.delivery_ratio,
             "drop_ratio": self.drop_ratio,
-            "drop_reasons": {k.value: v for k, v in self.drop_reasons.items()},
         }
 
 
 @dataclass
 class PendingTransfer:
-    """
-    A packet transfer that is in progress.
-    
-    Used internally by network backends to track packets in flight.
-    """
+    """Internal tracking of in-flight packets."""
     source_id: str
     destination_id: str
     packet_id: int
@@ -222,40 +208,20 @@ class NetworkBackend(ABC):
     """
     Abstract base class for network simulation backends.
     
-    Defines the interface for network simulation, allowing different
-    implementations (native, NS-3, etc.) to be plugged in without
-    changing the simulation logic.
-    
-    All implementations must support:
-    - Topology initialization and updates
-    - Packet sending and receiving
-    - Statistics collection
-    
-    Examples
-    --------
-    >>> class MyBackend(NetworkBackend):
-    ...     def initialize(self, topology):
-    ...         pass
-    ...     # ... other methods
-    
-    >>> backend = MyBackend()
-    >>> backend.initialize(topology)
-    >>> backend.send_packet("SAT-001", "SAT-002", packet_id=1)
-    >>> transfers = backend.step(60.0)
+    Defines the interface for simulating network packet transfers.
+    Implementations may use different simulation approaches
+    (instant delivery, delayed delivery, NS-3 simulation, etc.).
     """
     
     @abstractmethod
     def initialize(self, topology: Dict[str, Any]) -> None:
         """
-        Initialize the network with a topology.
+        Initialize backend with network topology.
         
         Parameters
         ----------
         topology : Dict
-            Network topology specification including:
-            - nodes: List of node specifications
-            - links: List of initial active links
-            - config: Network configuration parameters
+            Network topology with nodes and links
         """
         pass
     
@@ -264,13 +230,10 @@ class NetworkBackend(ABC):
         """
         Update the set of active links.
         
-        Called when satellite positions change and link availability
-        needs to be updated.
-        
         Parameters
         ----------
         active_links : Set[Tuple[str, str]]
-            Set of currently active bidirectional links as (node1, node2) tuples
+            Set of (node1, node2) tuples for active links
         """
         pass
     
@@ -293,96 +256,62 @@ class NetworkBackend(ABC):
         destination : str
             Destination node ID
         packet_id : int
-            Unique packet identifier
-        size_bytes : int, optional
-            Packet size in bytes (default 1024)
+            Packet content identifier
+        size_bytes : int
+            Packet size in bytes
         metadata : Dict, optional
-            Additional packet metadata
+            Additional metadata
         
         Returns
         -------
         bool
-            True if packet was queued successfully, False if rejected
+            True if packet was queued successfully
         """
         pass
     
     @abstractmethod
     def step(self, timestep: float) -> List[PacketTransfer]:
         """
-        Advance network simulation by one timestep.
-        
-        Processes all queued packets and returns completed transfers.
+        Advance simulation and return completed transfers.
         
         Parameters
         ----------
         timestep : float
-            Time to advance in seconds
+            Time step in seconds
         
         Returns
         -------
         List[PacketTransfer]
-            List of completed packet transfers (both successful and failed)
+            Completed packet transfers
         """
         pass
     
     @abstractmethod
     def get_statistics(self) -> NetworkStatistics:
         """
-        Get current network statistics.
+        Get network performance statistics.
         
         Returns
         -------
         NetworkStatistics
-            Current network performance statistics
+            Current statistics
         """
         pass
     
     def reset(self) -> None:
-        """
-        Reset the network backend to initial state.
-        
-        Default implementation does nothing. Subclasses should override
-        if they maintain state that needs to be reset.
-        """
+        """Reset backend state."""
         pass
     
     def shutdown(self) -> None:
-        """
-        Clean up resources.
-        
-        Called when the backend is no longer needed. Default implementation
-        does nothing. Subclasses should override if cleanup is needed.
-        """
+        """Clean up resources."""
         pass
     
     def is_link_active(self, node1: str, node2: str) -> bool:
-        """
-        Check if a link is currently active.
-        
-        Parameters
-        ----------
-        node1 : str
-            First node ID
-        node2 : str
-            Second node ID
-        
-        Returns
-        -------
-        bool
-            True if link is active in either direction
-        """
-        # Default implementation - subclasses should override for efficiency
+        """Check if a link is currently active."""
         return False
     
     def get_pending_count(self) -> int:
-        """
-        Get number of packets currently in transit.
-        
-        Returns
-        -------
-        int
-            Number of pending packet transfers
-        """
+        """Get number of packets currently in transit."""
         return 0
     
     @property
@@ -399,21 +328,7 @@ class NativeNetworkBackend(NetworkBackend):
     - Zero latency (instant delivery)
     - Perfect reliability (no drops except for missing links)
     - Unlimited bandwidth
-    - Topology-aware (respects line-of-sight and range)
-    
-    Parameters
-    ----------
-    allow_unlinked : bool, optional
-        If True, allow packets between nodes without active links (default False)
-    
-    Examples
-    --------
-    >>> backend = NativeNetworkBackend()
-    >>> backend.initialize({"links": [("SAT-001", "SAT-002")]})
-    >>> backend.send_packet("SAT-001", "SAT-002", packet_id=1)
-    >>> transfers = backend.step(60.0)
-    >>> print(transfers[0].success)
-    True
+    - Topology-aware (respects active links)
     """
     
     def __init__(self, allow_unlinked: bool = False):
@@ -423,50 +338,24 @@ class NativeNetworkBackend(NetworkBackend):
         self._current_time: float = 0.0
         self._allow_unlinked = allow_unlinked
         self._initialized = False
-        
-        # Latency sum for computing average
-        self._latency_sum: float = 0.0
-        self._latency_count: int = 0
     
     def initialize(self, topology: Dict[str, Any]) -> None:
-        """
-        Initialize with topology.
-        
-        Parameters
-        ----------
-        topology : Dict
-            Topology with optional 'links' key containing initial active links
-        """
+        """Initialize with topology."""
+        links = topology.get("links", [])
         self._active_links = set()
-        
-        # Extract links from topology
-        if "links" in topology:
-            for link in topology["links"]:
-                if isinstance(link, (list, tuple)) and len(link) >= 2:
-                    self._active_links.add((link[0], link[1]))
-        
-        self._pending_transfers.clear()
-        self._statistics.reset()
-        self._current_time = 0.0
-        self._latency_sum = 0.0
-        self._latency_count = 0
+        for link in links:
+            if isinstance(link, (list, tuple)) and len(link) == 2:
+                self._active_links.add((link[0], link[1]))
         self._initialized = True
-        
-        logger.debug(
-            f"NativeNetworkBackend initialized with {len(self._active_links)} links"
-        )
     
     def update_topology(self, active_links: Set[Tuple[str, str]]) -> None:
-        """
-        Update active links.
-        
-        Parameters
-        ----------
-        active_links : Set[Tuple[str, str]]
-            New set of active bidirectional links
-        """
-        self._active_links = active_links.copy()
-        logger.debug(f"Topology updated: {len(self._active_links)} active links")
+        """Update active links."""
+        self._active_links = active_links
+    
+    def _has_link(self, node1: str, node2: str) -> bool:
+        """Check if link exists (bidirectional)."""
+        return (node1, node2) in self._active_links or \
+               (node2, node1) in self._active_links
     
     def send_packet(
         self,
@@ -476,31 +365,8 @@ class NativeNetworkBackend(NetworkBackend):
         size_bytes: int = 1024,
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """
-        Queue a packet for instant delivery.
-        
-        In the native backend, packets are delivered instantly in the next
-        step() call if a link exists between source and destination.
-        
-        Parameters
-        ----------
-        source : str
-            Source node ID
-        destination : str
-            Destination node ID
-        packet_id : int
-            Packet content identifier
-        size_bytes : int
-            Packet size in bytes
-        metadata : Dict, optional
-            Additional metadata
-        
-        Returns
-        -------
-        bool
-            Always True (packets are never rejected at queue time)
-        """
-        transfer = PendingTransfer(
+        """Queue a packet for transmission."""
+        self._pending_transfers.append(PendingTransfer(
             source_id=source,
             destination_id=destination,
             packet_id=packet_id,
@@ -508,209 +374,129 @@ class NativeNetworkBackend(NetworkBackend):
             send_time=self._current_time,
             expected_arrival=self._current_time,  # Instant delivery
             metadata=metadata or {},
-        )
-        self._pending_transfers.append(transfer)
+        ))
+        self._statistics.record_send(size_bytes)
         return True
     
     def step(self, timestep: float) -> List[PacketTransfer]:
-        """
-        Process all pending transfers.
-        
-        In the native backend, all queued packets are delivered instantly
-        if a link exists between source and destination.
-        
-        Parameters
-        ----------
-        timestep : float
-            Time step in seconds (used for time tracking)
-        
-        Returns
-        -------
-        List[PacketTransfer]
-            List of completed transfers
-        """
+        """Process pending transfers."""
         self._current_time += timestep
-        completed: List[PacketTransfer] = []
+        transfers = []
         
         for pending in self._pending_transfers:
-            # Check if link exists (bidirectional check)
-            link_exists = self._has_link(pending.source_id, pending.destination_id)
+            # Check if link exists
+            has_link = self._has_link(pending.source_id, pending.destination_id)
             
-            if link_exists or self._allow_unlinked:
-                # Successful delivery
+            if has_link or self._allow_unlinked:
                 transfer = PacketTransfer(
                     source_id=pending.source_id,
                     destination_id=pending.destination_id,
                     packet_id=pending.packet_id,
                     timestamp=self._current_time,
                     success=True,
-                    latency_ms=0.0,  # Instant delivery
+                    latency_ms=0.0,
                     size_bytes=pending.size_bytes,
-                    dropped_reason=DropReason.NONE,
                     metadata=pending.metadata,
                 )
-                
-                self._statistics.total_packets_received += 1
-                self._statistics.total_bytes_received += pending.size_bytes
-                
-                # Update latency stats (0 for native)
-                self._latency_count += 1
-                # Average remains 0 for instant delivery
-                
+                self._statistics.record_receive(pending.size_bytes, 0.0)
             else:
-                # No link - packet dropped
                 transfer = PacketTransfer(
                     source_id=pending.source_id,
                     destination_id=pending.destination_id,
                     packet_id=pending.packet_id,
                     timestamp=self._current_time,
                     success=False,
-                    latency_ms=None,
+                    latency_ms=0.0,
                     size_bytes=pending.size_bytes,
-                    dropped_reason=DropReason.NO_ROUTE,
+                    drop_reason=DropReason.NO_ROUTE,
                     metadata=pending.metadata,
                 )
-                
-                self._statistics.total_packets_dropped += 1
-                self._statistics.drop_reasons[DropReason.NO_ROUTE] = \
-                    self._statistics.drop_reasons.get(DropReason.NO_ROUTE, 0) + 1
+                self._statistics.record_drop()
             
-            # Update sent statistics
-            self._statistics.total_packets_sent += 1
-            self._statistics.total_bytes_sent += pending.size_bytes
-            
-            completed.append(transfer)
+            transfers.append(transfer)
         
-        # Clear pending transfers
         self._pending_transfers.clear()
-        
-        return completed
+        return transfers
     
     def get_statistics(self) -> NetworkStatistics:
-        """
-        Get network statistics.
-        
-        Returns
-        -------
-        NetworkStatistics
-            Current statistics (perfect delivery for native backend)
-        """
+        """Get statistics."""
         return self._statistics
     
     def reset(self) -> None:
-        """Reset backend state."""
-        self._active_links.clear()
+        """Reset state."""
         self._pending_transfers.clear()
         self._statistics.reset()
         self._current_time = 0.0
-        self._latency_sum = 0.0
-        self._latency_count = 0
     
     def is_link_active(self, node1: str, node2: str) -> bool:
-        """Check if link is active (bidirectional check)."""
+        """Check if link is active."""
         return self._has_link(node1, node2)
     
     def get_pending_count(self) -> int:
-        """Get number of pending transfers."""
+        """Get pending transfer count."""
         return len(self._pending_transfers)
-    
-    def _has_link(self, node1: str, node2: str) -> bool:
-        """Check for link in either direction."""
-        return (node1, node2) in self._active_links or \
-               (node2, node1) in self._active_links
-    
-    @property
-    def active_links(self) -> Set[Tuple[str, str]]:
-        """Get current active links."""
-        return self._active_links.copy()
-    
-    @property
-    def current_time(self) -> float:
-        """Get current simulation time."""
-        return self._current_time
 
 
 class DelayedNetworkBackend(NetworkBackend):
     """
-    Network backend with configurable latency.
+    Network backend with propagation delay simulation.
     
-    Extends NativeNetworkBackend with propagation delay based on
-    distance between nodes. Useful for testing latency-aware protocols.
-    
-    Parameters
-    ----------
-    propagation_speed : float
-        Signal propagation speed in km/s (default: speed of light ~299792 km/s)
-    processing_delay_ms : float
-        Fixed processing delay per hop in milliseconds (default: 0)
-    position_provider : Callable, optional
-        Function that returns position for a node ID
-    
-    Examples
-    --------
-    >>> backend = DelayedNetworkBackend(processing_delay_ms=1.0)
-    >>> backend.set_positions({"SAT-001": [7000, 0, 0], "SAT-002": [0, 7000, 0]})
+    Simulates realistic latency based on distance between nodes.
     """
-    
-    SPEED_OF_LIGHT_KM_S = 299792.458
     
     def __init__(
         self,
-        propagation_speed: float = SPEED_OF_LIGHT_KM_S,
-        processing_delay_ms: float = 0.0,
-        position_provider: Optional[Callable[[str], np.ndarray]] = None
+        propagation_speed: float = 299792458.0,  # Speed of light m/s
+        fixed_delay_ms: float = 0.0,
     ):
-        self._propagation_speed = propagation_speed
-        self._processing_delay_ms = processing_delay_ms
-        self._position_provider = position_provider
-        
         self._active_links: Set[Tuple[str, str]] = set()
+        self._node_positions: Dict[str, np.ndarray] = {}
         self._pending_transfers: List[PendingTransfer] = []
         self._statistics = NetworkStatistics()
         self._current_time: float = 0.0
-        self._positions: Dict[str, np.ndarray] = {}
-        
-        self._latency_sum: float = 0.0
-        self._latency_count: int = 0
-    
-    def set_positions(self, positions: Dict[str, Union[List, np.ndarray]]) -> None:
-        """
-        Set node positions for delay calculation.
-        
-        Parameters
-        ----------
-        positions : Dict[str, array-like]
-            Mapping of node ID to [x, y, z] position in km
-        """
-        self._positions = {
-            k: np.array(v) if not isinstance(v, np.ndarray) else v
-            for k, v in positions.items()
-        }
+        self._propagation_speed = propagation_speed
+        self._fixed_delay_ms = fixed_delay_ms
+        self._initialized = False
     
     def initialize(self, topology: Dict[str, Any]) -> None:
         """Initialize with topology."""
+        # Parse links
+        links = topology.get("links", [])
         self._active_links = set()
+        for link in links:
+            if isinstance(link, (list, tuple)) and len(link) == 2:
+                self._active_links.add((link[0], link[1]))
         
-        if "links" in topology:
-            for link in topology["links"]:
-                if isinstance(link, (list, tuple)) and len(link) >= 2:
-                    self._active_links.add((link[0], link[1]))
+        # Parse node positions
+        nodes = topology.get("nodes", [])
+        self._node_positions = {}
+        for node in nodes:
+            node_id = node.get("id", "")
+            position = node.get("position", [0, 0, 0])
+            self._node_positions[node_id] = np.array(position, dtype=float)
         
-        # Extract positions from nodes if available
-        if "nodes" in topology:
-            for node in topology["nodes"]:
-                if "id" in node and "position" in node:
-                    self._positions[node["id"]] = np.array(node["position"])
-        
-        self._pending_transfers.clear()
-        self._statistics.reset()
-        self._current_time = 0.0
-        self._latency_sum = 0.0
-        self._latency_count = 0
+        self._initialized = True
     
     def update_topology(self, active_links: Set[Tuple[str, str]]) -> None:
         """Update active links."""
-        self._active_links = active_links.copy()
+        self._active_links = active_links
+    
+    def _has_link(self, node1: str, node2: str) -> bool:
+        """Check if link exists."""
+        return (node1, node2) in self._active_links or \
+               (node2, node1) in self._active_links
+    
+    def _calculate_latency(self, source: str, destination: str) -> float:
+        """Calculate propagation latency in milliseconds."""
+        if self._fixed_delay_ms > 0:
+            return self._fixed_delay_ms
+        
+        src_pos = self._node_positions.get(source, np.zeros(3))
+        dst_pos = self._node_positions.get(destination, np.zeros(3))
+        
+        distance_m = np.linalg.norm(dst_pos - src_pos)
+        delay_s = distance_m / self._propagation_speed
+        return delay_s * 1000.0
     
     def send_packet(
         self,
@@ -720,11 +506,11 @@ class DelayedNetworkBackend(NetworkBackend):
         size_bytes: int = 1024,
         metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """Queue packet with calculated delay."""
-        delay_ms = self._calculate_delay(source, destination)
-        arrival_time = self._current_time + (delay_ms / 1000.0)
+        """Queue a packet for transmission."""
+        latency_ms = self._calculate_latency(source, destination)
+        arrival_time = self._current_time + (latency_ms / 1000.0)
         
-        transfer = PendingTransfer(
+        self._pending_transfers.append(PendingTransfer(
             source_id=source,
             destination_id=destination,
             packet_id=packet_id,
@@ -732,50 +518,33 @@ class DelayedNetworkBackend(NetworkBackend):
             send_time=self._current_time,
             expected_arrival=arrival_time,
             metadata=metadata or {},
-        )
-        self._pending_transfers.append(transfer)
+        ))
+        self._statistics.record_send(size_bytes)
         return True
     
     def step(self, timestep: float) -> List[PacketTransfer]:
-        """Process transfers that have completed."""
+        """Process transfers that arrive during this timestep."""
         self._current_time += timestep
-        completed: List[PacketTransfer] = []
-        remaining: List[PendingTransfer] = []
+        transfers = []
+        remaining = []
         
         for pending in self._pending_transfers:
             if pending.expected_arrival <= self._current_time:
-                # Check if link still exists
-                link_exists = self._has_link(pending.source_id, pending.destination_id)
-                
+                has_link = self._has_link(pending.source_id, pending.destination_id)
                 latency_ms = (pending.expected_arrival - pending.send_time) * 1000.0
                 
-                if link_exists:
+                if has_link:
                     transfer = PacketTransfer(
                         source_id=pending.source_id,
                         destination_id=pending.destination_id,
                         packet_id=pending.packet_id,
-                        timestamp=self._current_time,
+                        timestamp=pending.expected_arrival,
                         success=True,
                         latency_ms=latency_ms,
                         size_bytes=pending.size_bytes,
-                        dropped_reason=DropReason.NONE,
                         metadata=pending.metadata,
                     )
-                    
-                    self._statistics.total_packets_received += 1
-                    self._statistics.total_bytes_received += pending.size_bytes
-                    
-                    # Update latency stats
-                    self._latency_sum += latency_ms
-                    self._latency_count += 1
-                    self._statistics.average_latency_ms = \
-                        self._latency_sum / self._latency_count
-                    self._statistics.min_latency_ms = min(
-                        self._statistics.min_latency_ms, latency_ms
-                    )
-                    self._statistics.max_latency_ms = max(
-                        self._statistics.max_latency_ms, latency_ms
-                    )
+                    self._statistics.record_receive(pending.size_bytes, latency_ms)
                 else:
                     transfer = PacketTransfer(
                         source_id=pending.source_id,
@@ -783,112 +552,44 @@ class DelayedNetworkBackend(NetworkBackend):
                         packet_id=pending.packet_id,
                         timestamp=self._current_time,
                         success=False,
-                        latency_ms=None,
+                        latency_ms=latency_ms,
                         size_bytes=pending.size_bytes,
-                        dropped_reason=DropReason.LINK_DOWN,
+                        drop_reason=DropReason.NO_ROUTE,
                         metadata=pending.metadata,
                     )
-                    
-                    self._statistics.total_packets_dropped += 1
-                    self._statistics.drop_reasons[DropReason.LINK_DOWN] = \
-                        self._statistics.drop_reasons.get(DropReason.LINK_DOWN, 0) + 1
+                    self._statistics.record_drop()
                 
-                self._statistics.total_packets_sent += 1
-                self._statistics.total_bytes_sent += pending.size_bytes
-                completed.append(transfer)
+                transfers.append(transfer)
             else:
-                # Still in transit
                 remaining.append(pending)
         
         self._pending_transfers = remaining
-        return completed
+        return transfers
     
     def get_statistics(self) -> NetworkStatistics:
-        """Get network statistics."""
+        """Get statistics."""
         return self._statistics
     
     def reset(self) -> None:
-        """Reset backend state."""
-        self._active_links.clear()
+        """Reset state."""
         self._pending_transfers.clear()
         self._statistics.reset()
         self._current_time = 0.0
-        self._latency_sum = 0.0
-        self._latency_count = 0
     
     def is_link_active(self, node1: str, node2: str) -> bool:
         """Check if link is active."""
         return self._has_link(node1, node2)
     
     def get_pending_count(self) -> int:
-        """Get number of pending transfers."""
+        """Get pending transfer count."""
         return len(self._pending_transfers)
-    
-    def _has_link(self, node1: str, node2: str) -> bool:
-        """Check for link in either direction."""
-        return (node1, node2) in self._active_links or \
-               (node2, node1) in self._active_links
-    
-    def _calculate_delay(self, source: str, destination: str) -> float:
-        """
-        Calculate propagation delay between nodes.
-        
-        Returns delay in milliseconds.
-        """
-        delay_ms = self._processing_delay_ms
-        
-        # Add propagation delay if positions available
-        if source in self._positions and destination in self._positions:
-            distance = np.linalg.norm(
-                self._positions[source] - self._positions[destination]
-            )
-            propagation_delay_s = distance / self._propagation_speed
-            delay_ms += propagation_delay_s * 1000.0
-        elif self._position_provider is not None:
-            try:
-                pos_src = self._position_provider(source)
-                pos_dst = self._position_provider(destination)
-                distance = np.linalg.norm(pos_src - pos_dst)
-                propagation_delay_s = distance / self._propagation_speed
-                delay_ms += propagation_delay_s * 1000.0
-            except Exception:
-                pass  # Use only processing delay
-        
-        return delay_ms
 
 
-def create_native_backend() -> NativeNetworkBackend:
-    """
-    Create a native network backend with default settings.
-    
-    Returns
-    -------
-    NativeNetworkBackend
-        Configured backend with instant, perfect delivery
-    """
-    return NativeNetworkBackend()
+def create_native_backend(**kwargs) -> NativeNetworkBackend:
+    """Create a native network backend."""
+    return NativeNetworkBackend(**kwargs)
 
 
-def create_delayed_backend(
-    propagation_speed: float = DelayedNetworkBackend.SPEED_OF_LIGHT_KM_S,
-    processing_delay_ms: float = 0.0
-) -> DelayedNetworkBackend:
-    """
-    Create a delayed network backend.
-    
-    Parameters
-    ----------
-    propagation_speed : float
-        Signal propagation speed in km/s
-    processing_delay_ms : float
-        Fixed processing delay per hop in milliseconds
-    
-    Returns
-    -------
-    DelayedNetworkBackend
-        Configured backend with latency simulation
-    """
-    return DelayedNetworkBackend(
-        propagation_speed=propagation_speed,
-        processing_delay_ms=processing_delay_ms
-    )
+def create_delayed_backend(**kwargs) -> DelayedNetworkBackend:
+    """Create a delayed network backend."""
+    return DelayedNetworkBackend(**kwargs)

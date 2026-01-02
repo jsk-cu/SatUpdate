@@ -6,6 +6,7 @@ Provides common fixtures, markers, and utilities for testing the
 NS-3 and SPICE integration components.
 """
 
+import json
 import math
 import sys
 import tempfile
@@ -85,197 +86,47 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture
 def simulation_config():
     """Default simulation configuration for testing."""
-    from simulation import SimulationConfig, ConstellationType
-    
-    return SimulationConfig(
-        constellation_type=ConstellationType.WALKER_DELTA,
-        num_planes=2,
-        sats_per_plane=3,
-        altitude=550.0,
-        inclination=math.radians(53),
-        num_packets=10,
-        random_seed=42,
-    )
-
-
-@pytest.fixture
-def small_simulation(simulation_config):
-    """Small simulation instance for quick tests."""
-    from simulation import Simulation
-    
-    sim = Simulation(simulation_config, enable_logging=True)
-    sim.initialize(timestep=60.0)
-    return sim
-
-
-@pytest.fixture
-def medium_simulation():
-    """Medium-sized simulation for integration tests."""
-    from simulation import Simulation, SimulationConfig, ConstellationType
-    
-    config = SimulationConfig(
-        constellation_type=ConstellationType.WALKER_DELTA,
-        num_planes=4,
-        sats_per_plane=4,
-        altitude=550.0,
-        inclination=math.radians(53),
-        num_packets=50,
-        random_seed=42,
-    )
-    sim = Simulation(config, enable_logging=True)
-    sim.initialize(timestep=60.0)
-    return sim
+    return {
+        "num_orbits": 3,
+        "satellites_per_orbit": 4,
+        "altitude_km": 550,
+        "inclination_deg": 53.0,
+        "epoch": "2025-01-01T00:00:00Z",
+    }
 
 
 @pytest.fixture
 def sample_satellites():
-    """Sample satellite objects for testing."""
-    from simulation import (
-        EllipticalOrbit, 
-        Satellite, 
-        EARTH_RADIUS_KM
-    )
-    
-    satellites = []
-    for i in range(3):
-        orbit = EllipticalOrbit(
-            apoapsis=EARTH_RADIUS_KM + 550,
-            periapsis=EARTH_RADIUS_KM + 550,
-            inclination=math.radians(53),
-            longitude_of_ascending_node=math.radians(i * 120),
-            argument_of_periapsis=0,
-        )
-        sat = Satellite(
-            orbit=orbit,
-            initial_position=i / 3,
-            satellite_id=f"TEST-SAT-{i+1:03d}"
-        )
-        satellites.append(sat)
-    
-    return satellites
-
-
-# =============================================================================
-# TRAJECTORY PROVIDER FIXTURES
-# =============================================================================
-
-@pytest.fixture
-def sample_trajectory_states():
-    """Sample trajectory states for testing."""
-    from dataclasses import dataclass
-    
-    @dataclass
-    class TrajectoryState:
-        position_eci: np.ndarray
-        velocity_eci: np.ndarray
-        epoch: datetime
-        reference_frame: str = "J2000"
-    
-    states = []
-    base_time = datetime(2025, 1, 1, 0, 0, 0)
-    
-    for i in range(10):
-        # Simple circular orbit approximation
-        angle = math.radians(i * 36)  # 36 degrees per step
-        radius = 6921.0  # 550 km altitude
-        
-        states.append(TrajectoryState(
-            position_eci=np.array([
-                radius * math.cos(angle),
-                radius * math.sin(angle),
-                0.0
-            ]),
-            velocity_eci=np.array([
-                -7.6 * math.sin(angle),
-                7.6 * math.cos(angle),
-                0.0
-            ]),
-            epoch=base_time + timedelta(minutes=i * 10)
-        ))
-    
-    return states
-
-
-# =============================================================================
-# SPICE MOCK FIXTURES
-# =============================================================================
-
-@pytest.fixture
-def mock_spiceypy():
-    """Mock SpiceyPy module for testing without SPICE installation."""
-    mock_spice = MagicMock()
-    
-    # Mock furnsh (load kernel)
-    mock_spice.furnsh = MagicMock()
-    
-    # Mock unload
-    mock_spice.unload = MagicMock()
-    
-    # Mock kclear (clear all kernels)
-    mock_spice.kclear = MagicMock()
-    
-    # Mock str2et (string to ephemeris time)
-    mock_spice.str2et = MagicMock(return_value=0.0)
-    
-    # Mock spkez (get state vector)
-    def mock_spkez(target, et, frame, abcorr, observer):
-        # Return mock state vector [x, y, z, vx, vy, vz]
-        return [7000.0, 0.0, 0.0, 0.0, 7.5, 0.0], 0.0
-    mock_spice.spkez = MagicMock(side_effect=mock_spkez)
-    
-    # Mock spkpos (get position)
-    def mock_spkpos(target, et, frame, abcorr, observer):
-        return [7000.0, 0.0, 0.0], 0.0
-    mock_spice.spkpos = MagicMock(side_effect=mock_spkpos)
-    
-    # Mock spkcov (get coverage window)
-    mock_window = MagicMock()
-    mock_window.card = MagicMock(return_value=2)
-    mock_spice.spkcov = MagicMock(return_value=mock_window)
-    mock_spice.wnfetd = MagicMock(return_value=(0.0, 86400.0))
-    
-    return mock_spice
-
-
-@pytest.fixture
-def mock_spice_kernels(tmp_path):
-    """Create mock SPICE kernel files."""
-    kernels_dir = tmp_path / "kernels"
-    kernels_dir.mkdir()
-    
-    # Create mock kernel files (just empty files for path testing)
-    (kernels_dir / "naif0012.tls").touch()
-    (kernels_dir / "de440.bsp").touch()
-    (kernels_dir / "test_constellation.bsp").touch()
-    
-    return kernels_dir
-
-
-@pytest.fixture
-def spice_config_file(tmp_path, mock_spice_kernels):
-    """Create a sample SPICE configuration file."""
-    import json
-    
-    config = {
-        "name": "TestConstellation",
-        "epoch": "2025-01-01T00:00:00Z",
-        "leapseconds": "naif0012.tls",
-        "planetary": ["de440.bsp"],
-        "spacecraft_kernels": ["test_constellation.bsp"],
-        "satellites": {
-            "TEST-SAT-001": -100001,
-            "TEST-SAT-002": -100002,
-            "TEST-SAT-003": -100003,
+    """Sample satellite orbital elements."""
+    return [
+        {
+            "id": "SAT-001",
+            "semi_major_axis": 6928.0,  # km
+            "eccentricity": 0.001,
+            "inclination": 53.0,  # degrees
+            "raan": 0.0,
+            "arg_perigee": 0.0,
+            "true_anomaly": 0.0,
         },
-        "reference_frame": "J2000",
-        "observer": "EARTH"
-    }
-    
-    config_file = tmp_path / "spice_config.json"
-    with open(config_file, "w") as f:
-        json.dump(config, f)
-    
-    return config_file
+        {
+            "id": "SAT-002",
+            "semi_major_axis": 6928.0,
+            "eccentricity": 0.001,
+            "inclination": 53.0,
+            "raan": 120.0,
+            "arg_perigee": 0.0,
+            "true_anomaly": 30.0,
+        },
+        {
+            "id": "SAT-003",
+            "semi_major_axis": 6928.0,
+            "eccentricity": 0.001,
+            "inclination": 53.0,
+            "raan": 240.0,
+            "arg_perigee": 0.0,
+            "true_anomaly": 60.0,
+        },
+    ]
 
 
 # =============================================================================
@@ -285,7 +136,6 @@ def spice_config_file(tmp_path, mock_spice_kernels):
 @pytest.fixture
 def mock_ns3_subprocess():
     """Mock subprocess for NS-3 file mode testing."""
-    import json
     
     def create_mock_result(transfers=None):
         if transfers is None:
@@ -324,19 +174,27 @@ def mock_ns3_subprocess():
 @pytest.fixture
 def mock_ns3_socket():
     """Mock socket for NS-3 socket mode testing."""
-    import json
+    import socket as socket_module
+    import time
     
     class MockSocket:
         def __init__(self):
             self.sent_data = []
             self.response_queue = []
             self.connected = False
+            self._timeout = None
+            self._blocking = True
         
         def connect(self, address):
             self.connected = True
         
+        def settimeout(self, timeout):
+            self._timeout = timeout
+            self._blocking = (timeout is None or timeout > 0)
+        
         def sendall(self, data):
             self.sent_data.append(data)
+            # Auto-generate response
             response = {
                 "status": "success",
                 "transfers": [
@@ -348,14 +206,24 @@ def mock_ns3_socket():
                         "success": True,
                         "latency_ms": 23.4
                     }
-                ]
+                ],
+                "statistics": {
+                    "total_packets_sent": 1,
+                    "total_packets_received": 1,
+                    "average_latency_ms": 23.4
+                }
             }
             self.response_queue.append(json.dumps(response) + "\n")
         
         def recv(self, bufsize):
             if self.response_queue:
                 return self.response_queue.pop(0).encode()
-            return b""
+            # Simulate timeout instead of returning empty (which signals close)
+            if self._timeout is not None and self._timeout < 1:
+                raise socket_module.timeout("timed out")
+            # For longer timeouts, sleep briefly and raise timeout
+            time.sleep(0.05)
+            raise socket_module.timeout("timed out")
         
         def close(self):
             self.connected = False
@@ -406,10 +274,10 @@ def sample_topology():
     """Sample network topology for testing."""
     return {
         "nodes": [
-            {"id": "SAT-001", "type": "satellite", "position": [7000, 0, 0]},
-            {"id": "SAT-002", "type": "satellite", "position": [0, 7000, 0]},
-            {"id": "SAT-003", "type": "satellite", "position": [-7000, 0, 0]},
-            {"id": "BASE-1", "type": "ground", "position": [6371, 0, 0]},
+            {"id": "SAT-001", "type": "satellite", "position": [7000000, 0, 0]},
+            {"id": "SAT-002", "type": "satellite", "position": [0, 7000000, 0]},
+            {"id": "SAT-003", "type": "satellite", "position": [-7000000, 0, 0]},
+            {"id": "BASE-1", "type": "ground", "position": [6371000, 0, 0]},
         ],
         "links": [
             ("SAT-001", "SAT-002"),
@@ -461,21 +329,6 @@ def assert_positions_close(pos1: np.ndarray, pos2: np.ndarray, rtol: float = 1e-
     np.testing.assert_allclose(pos1, pos2, rtol=rtol)
 
 
-def assert_simulation_unchanged(sim_before, sim_after):
-    """Assert simulation state hasn't changed unexpectedly."""
-    assert sim_before.num_satellites == sim_after.num_satellites
-    assert sim_before.num_orbits == sim_after.num_orbits
-    
-    for i, (sat_b, sat_a) in enumerate(zip(
-        sim_before.satellites, sim_after.satellites
-    )):
-        assert sat_b.satellite_id == sat_a.satellite_id
-        assert_positions_close(
-            sat_b.get_position_eci(),
-            sat_a.get_position_eci()
-        )
-
-
 def run_simulation_steps(sim, num_steps: int, timestep: float = 60.0):
     """Helper to run simulation for several steps."""
     states = []
@@ -483,18 +336,3 @@ def run_simulation_steps(sim, num_steps: int, timestep: float = 60.0):
         state = sim.step(timestep)
         states.append(state)
     return states
-
-
-# =============================================================================
-# FIXTURE CLEANUP
-# =============================================================================
-
-@pytest.fixture(autouse=True)
-def cleanup_spice():
-    """Ensure SPICE kernels are unloaded after each test."""
-    yield
-    try:
-        import spiceypy as spice
-        spice.kclear()
-    except ImportError:
-        pass
