@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SatUpdate Simulation Package
+SUNDEWS Simulation Package
 
 This package provides all the numerical simulation components for
 satellite constellation simulation, including orbital mechanics,

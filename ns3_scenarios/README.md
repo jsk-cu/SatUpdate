@@ -1,4 +1,4 @@
-# NS-3 Scenarios for SatUpdate
+# NS-3 Scenarios for SUNDEWS
 
 This directory contains NS-3 scenarios for high-fidelity network simulation
 of satellite constellation communications.
@@ -141,7 +141,7 @@ make
 
 ## Python Integration
 
-The NS-3 backend is integrated into SatUpdate via the `NS3Backend` class:
+The NS-3 backend is integrated into SUNDEWS via the `NS3Backend` class:
 
 ```python
 from simulation import NS3Backend, NS3Config

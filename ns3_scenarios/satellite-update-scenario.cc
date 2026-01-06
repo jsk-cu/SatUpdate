@@ -1,8 +1,8 @@
 /*
- * SatUpdate NS-3 Scenario
+ * SUNDEWS NS-3 Scenario
  * 
  * This scenario simulates packet transfer between satellite constellation nodes
- * for the SatUpdate project. It receives topology and packet information via
+ * for the SUNDEWS project. It receives topology and packet information via
  * JSON input file and produces transfer results as JSON output.
  *
  * Usage:
@@ -284,7 +284,7 @@ int main(int argc, char *argv[]) {
         LogComponentEnable("SatelliteUpdateScenario", LOG_LEVEL_INFO);
     }
     
-    NS_LOG_INFO("SatUpdate NS-3 Scenario starting...");
+    NS_LOG_INFO("SUNDEWS NS-3 Scenario starting...");
     NS_LOG_INFO("Input: " << inputFile);
     NS_LOG_INFO("Output: " << outputFile);
     

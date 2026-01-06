@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SatUpdate Visualization Package
+SUNDEWS Visualization Package
 
 This package provides Pygame-based visualization components for
 satellite constellation simulations.
@@ -10,7 +10,7 @@ The visualization package depends on the simulation package but can be
 optionally omitted if only running headless simulations.
 
 Usage:
-    from SatUpdate.visualization import Visualizer
+    from SUNDEWS.visualization import Visualizer
     
     visualizer = Visualizer()
     visualizer.create_simulation("walker_delta", num_planes=4, sats_per_plane=6)

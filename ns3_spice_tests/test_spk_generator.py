@@ -249,7 +249,7 @@ class TestSPKGeneratorBasic:
         
         assert gen.output_dir == temp_output_dir
         assert gen.segments == []
-        assert gen.producer_id == "SatUpdate"
+        assert gen.producer_id == "SUNDEWS"
     
     def test_generator_custom_producer(self, temp_output_dir):
         """Test SPKGenerator with custom producer ID."""

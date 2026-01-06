@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SatUpdate - Satellite Constellation Simulator
+SUNDEWS - Satellite Constellation Simulator
 
 Command-line entry point for running satellite constellation simulations
 with optional visualization.

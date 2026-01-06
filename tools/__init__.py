@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SatUpdate Tools Package
+SUNDEWS Tools Package
 
 This package provides utility tools for the satellite constellation
 simulator, including:

@@ -1,4 +1,4 @@
-# CMakeLists.txt for SatUpdate NS-3 Scenario
+# CMakeLists.txt for SUNDEWS NS-3 Scenario
 #
 # This file configures the build for the satellite-update-scenario.
 # It should be placed in the ns-3 scratch directory or configured

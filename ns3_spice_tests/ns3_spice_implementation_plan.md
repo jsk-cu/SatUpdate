@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document outlines the implementation plan for adding optional NS-3 network simulation and SPICE ephemeris support to the SatUpdate satellite constellation simulator. These features are designed as **opt-in extensions** that preserve all existing functionality while enabling more sophisticated simulation capabilities.
+This document outlines the implementation plan for adding optional NS-3 network simulation and SPICE ephemeris support to the SUNDEWS satellite constellation simulator. These features are designed as **opt-in extensions** that preserve all existing functionality while enabling more sophisticated simulation capabilities.
 
 ### Current Status
 
@@ -32,7 +32,7 @@ This document outlines the implementation plan for adding optional NS-3 network 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         SatUpdate Core                                   │
+│                          SUNDEWS Core                                   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  ┌──────────────────────┐    ┌──────────────────────┐                   │

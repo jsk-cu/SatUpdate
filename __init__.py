@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-SatUpdate - Satellite Constellation Simulation and Visualization
+SUNDEWS - Satellite Constellation Simulation and Visualization
 
 A framework for simulating and visualizing satellite constellations,
 with support for Walker-Delta, Walker-Star, and random constellation patterns.
@@ -13,7 +13,7 @@ The package is divided into two main subpackages:
 Example usage:
 
     # Simulation only (no visualization)
-    from SatUpdate.simulation import Simulation, SimulationConfig, ConstellationType
+    from SUNDEWS.simulation import Simulation, SimulationConfig, ConstellationType
     
     config = SimulationConfig(
         constellation_type=ConstellationType.WALKER_DELTA,

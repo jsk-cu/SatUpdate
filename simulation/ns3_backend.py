@@ -1150,7 +1150,7 @@ class NS3Backend(NetworkBackend):
             self._output_file = self._work_dir / "ns3_output.json"
         else:
             # Create temporary directory
-            self._temp_dir = Path(tempfile.mkdtemp(prefix="ns3_satupdate_"))
+            self._temp_dir = Path(tempfile.mkdtemp(prefix="ns3_SUNDEWS_"))
             self._input_file = self._temp_dir / "input.json"
             self._output_file = self._temp_dir / "output.json"
     

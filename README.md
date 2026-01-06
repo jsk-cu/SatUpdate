@@ -16,8 +16,8 @@ SUNDEWS simulates homogeneous satellite constellations with the goal of experime
 ### Basic Installation
 
 ```bash
-git clone <repository>
-cd satupdate
+git clone git@github.com:jsk-cu/SUNDEWS.git
+cd SUNDEWS
 pip install -r requirements.txt
 ```
 
@@ -317,11 +317,11 @@ cd /opt/ns3
 ./ns3 build
 ```
 
-#### Installing the SatUpdate Scenario
+#### Installing the SUNDEWS Scenario
 
 ```bash
 cd /opt/ns3
-cp /path/to/satupdate/ns3_scenarios/satellite-update-scenario.cc scratch/
+cp /path/to/SUNDEWS/ns3_scenarios/satellite-update-scenario.cc scratch/
 ./ns3 build
 ```
 
@@ -440,7 +440,7 @@ python main.py \
 ## Project Structure
 
 ```
-satupdate/
+SUNDEWS/
 ├── main.py                   # Command-line entry point
 ├── simulation/
 │   ├── __init__.py           # Module exports
