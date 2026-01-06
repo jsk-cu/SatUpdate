@@ -1,10 +1,10 @@
-# SatUpdate - Satellite Constellation Simulator
+# SUNDEWS - Satellite Constellation Simulator
 
-A high-fidelity satellite constellation simulator with support for multi-packet update dissemination algorithms, optional NS-3 network simulation, and SPICE ephemeris integration.
+Simulator for Updating Networks in Distributed Exoatmospheric WAN Systems (SUNDEWS): A high-fidelity satellite constellation simulator with support for multi-packet update dissemination algorithms, optional NS-3 network simulation, and SPICE ephemeris integration.
 
 ## Overview
 
-SatUpdate simulates homogeneous satellite constellations with the goal of experimenting with algorithms for disseminating multi-packet updates to the entire constellation. The simulator provides:
+SUNDEWS simulates homogeneous satellite constellations with the goal of experimenting with algorithms for disseminating multi-packet updates to the entire constellation. The simulator provides:
 
 - **Trajectory Simulation**: Keplerian orbit propagation or NASA SPICE ephemeris
 - **Network Simulation**: Native instant delivery, delayed propagation, or NS-3 high-fidelity simulation
